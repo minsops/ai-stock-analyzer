@@ -8,6 +8,7 @@
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+pip install .
 python scripts/init_db.py
 python scripts/verify_sprint1.py --code 000001 --days 90
 pytest
@@ -16,16 +17,16 @@ pytest
 ## CLI
 
 ```bash
-python -m src.cli.main init-db
-python -m src.cli.main update-data --incremental --limit 20
-python -m src.cli.main update-data --full --limit 20
-python -m src.cli.main update-data --incremental --include-slow-data --limit 20
-python -m src.cli.main score 000001
-python -m src.cli.main scan --top-n 20
-python -m src.cli.main regime
-python -m src.cli.main valuation 000001
-python -m src.cli.main backtest --start 2025-01-01 --end 2025-12-31 --top-n 10 --freq monthly
-python -m src.cli.main serve --port 8000
+ai-stock init-db
+ai-stock update-data --incremental --limit 20
+ai-stock update-data --full --limit 20
+ai-stock update-data --incremental --include-slow-data --limit 20
+ai-stock score 000001
+ai-stock scan --top-n 20
+ai-stock regime
+ai-stock valuation 000001
+ai-stock backtest --start 2025-01-01 --end 2025-12-31 --top-n 10 --freq monthly
+ai-stock serve --port 8000
 ```
 
 ## API

@@ -40,7 +40,15 @@ def main() -> None:
     quotes = fetcher.get_daily_quotes(args.code, start_date, end_date)
     print(f"拉取并清洗日线数据: {len(quotes)} 行")
     if quotes.empty:
-        print("未获取到行情数据，请检查网络或 AKShare 接口状态。")
+        existing = storage.get_quotes(args.code)
+        if existing.empty:
+            print("未获取到行情数据，且数据库没有可用历史数据。请检查网络或 AKShare 接口状态。")
+            raise SystemExit(1)
+        print("实时接口暂不可用，使用数据库已有数据继续验证读取链路。")
+        print(f"从数据库读取: {len(existing)} 行")
+        print("最近 5 条数据:")
+        print(existing.tail(5).to_string(index=False))
+        print("Sprint 1 数据链路验证完成（使用本地已有数据）")
         return
 
     written = storage.upsert_daily_quotes(quotes)

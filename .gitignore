@@ -9,3 +9,5 @@ data/db/*.db
 data/raw/cache.db
 data/raw/cache.db-*
 .env
+*.egg-info/
+build/

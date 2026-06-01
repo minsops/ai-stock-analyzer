@@ -31,6 +31,10 @@ class DataCache:
         if value is None:
             return None
         if isinstance(value, pd.DataFrame):
+            if value.empty:
+                self._cache.delete(key)
+                logger.debug(f"丢弃空缓存: {key}")
+                return None
             logger.debug(f"命中缓存: {key}")
             return value.copy()
         logger.warning(f"缓存内容类型异常，已忽略: {key}")
@@ -50,4 +54,3 @@ class DataCache:
         expired_count = self._cache.expire()
         logger.info(f"已清理过期缓存 {expired_count} 条")
         return int(expired_count)
-

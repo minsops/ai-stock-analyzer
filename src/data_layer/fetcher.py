@@ -76,7 +76,7 @@ class StockDataFetcher:
         cleaned = self.cleaner.clean_quotes(df)
         if not cleaned.empty:
             cleaned["code"] = normalized_code
-        self.cache.set(cache_key, cleaned)
+            self.cache.set(cache_key, cleaned)
         return cleaned
 
     def get_financial_data(self, code: str) -> pd.DataFrame:
@@ -101,7 +101,8 @@ class StockDataFetcher:
         financial = self.cleaner.clean_financial(indicator)
         valuation_cleaned = self.cleaner.clean_financial(valuation)
         merged = self._merge_financial_frames(financial, valuation_cleaned, normalized_code)
-        self.cache.set(cache_key, merged)
+        if not merged.empty:
+            self.cache.set(cache_key, merged)
         return merged
 
     def get_capital_flow(self, code: str, recent_days: int = 60) -> pd.DataFrame:
@@ -123,7 +124,7 @@ class StockDataFetcher:
         if not cleaned.empty:
             cleaned["code"] = normalized_code
             cleaned = cleaned.sort_values("trade_date").tail(recent_days)
-        self.cache.set(cache_key, cleaned)
+            self.cache.set(cache_key, cleaned)
         return cleaned
 
     def get_industry_index(self, recent_days: int = 120) -> pd.DataFrame:
@@ -152,7 +153,8 @@ class StockDataFetcher:
 
         combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
         cleaned = self.cleaner.clean_industry_index(combined)
-        self.cache.set(cache_key, cleaned)
+        if not cleaned.empty:
+            self.cache.set(cache_key, cleaned)
         return cleaned
 
     def get_market_overview(self) -> dict[str, Any]:
@@ -186,7 +188,8 @@ class StockDataFetcher:
             "decliners": int((pd.to_numeric(spot.get("涨跌幅", pd.Series(dtype=float)), errors="coerce") < 0).sum()) if not spot.empty else 0,
             "northbound": north.tail(10).to_dict("records") if not north.empty else [],
         }
-        self.cache.set(cache_key, pd.DataFrame([overview]))
+        if overview["hs300"] or overview["advancers"] or overview["decliners"] or overview["northbound"]:
+            self.cache.set(cache_key, pd.DataFrame([overview]))
         return overview
 
     def _safe_call(self, description: str, func: Callable[..., pd.DataFrame], *args: Any, **kwargs: Any) -> pd.DataFrame:
