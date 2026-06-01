@@ -27,6 +27,8 @@ def get_ranking(date: str | None = None, top_n: int = 50, industry: str | None =
             RankingItem(
                 rank=idx,
                 code=row["code"],
+                name=row.get("name"),
+                industry=row.get("industry"),
                 composite_score=row.get("composite_score") or 0,
                 value_score=row.get("value_score"),
                 trend_score=row.get("trend_score"),
@@ -37,4 +39,3 @@ def get_ranking(date: str | None = None, top_n: int = 50, industry: str | None =
         )
     regime, _, _ = RegimeDetector().detect(get_fetcher().get_market_overview())
     return {"date": score_date, "regime": regime, "total_scanned": len(scores), "total_passed_filter": len(scores), "items": items}
-
