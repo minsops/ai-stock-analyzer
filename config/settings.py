@@ -88,6 +88,12 @@ REGIME_TOTAL_POSITION = {
     "extreme_greed": 0.60,
 }
 
+# 因子倾斜(路线B落地):扫描排序时把综合分向稳健因子集(低PE+ROE+净利同比+60日反转)
+# 轻度倾斜。每单位因子组合 z(截面、行业+市值中性化)给综合分加的"分数点"，0=关闭。
+# 经回测验证(scripts/factor_tilt_backtest.py)倾斜净改善 年化+夏普+回撤;但因子在同段样本
+# 选出，存在过拟合风险，故默认保守(温和倾斜)、可经 FACTOR_TILT_STRENGTH 环境变量调/关。
+FACTOR_TILT_STRENGTH = float(os.getenv("FACTOR_TILT_STRENGTH", "4.0"))
+
 # 回测
 BACKTEST_COMMISSION_RATE = 0.0003
 BACKTEST_SLIPPAGE = 0.001

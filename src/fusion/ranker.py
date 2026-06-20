@@ -6,6 +6,7 @@ from datetime import date
 import json
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from loguru import logger
 
@@ -139,10 +140,55 @@ class StockRanker:
                     )
             except Exception as exc:  # noqa: BLE001 - 扫描单股失败不影响整体
                 logger.warning(f"{code} 评分失败，已跳过: {exc}")
-        result = pd.DataFrame(rows).sort_values("composite_score", ascending=False).head(top_n) if rows else pd.DataFrame()
+        frame = pd.DataFrame(rows)
+        frame = self._apply_factor_tilt(frame)
+        result = frame.sort_values("composite_score", ascending=False).head(top_n) if not frame.empty else pd.DataFrame()
         if not result.empty:
             self.storage.save_scores(result)
         return result
+
+    def _apply_factor_tilt(self, frame: pd.DataFrame) -> pd.DataFrame:
+        """把综合分向稳健因子集(低PE+ROE+净利同比+60日反转)轻度倾斜。
+
+        强度由 settings.FACTOR_TILT_STRENGTH 控制(0=关闭)。截面行业+市值中性化后取 z，
+        加 strength×clip(z,-3,3) 到 composite_score。依据见 src/fusion/factor_tilt.py。
+        """
+        from config import settings
+        from src.fusion.factor_tilt import compute_factor_tilt
+        from src.industry.sector_map import csi_sector
+
+        strength = float(getattr(settings, "FACTOR_TILT_STRENGTH", 0.0) or 0.0)
+        if strength <= 0 or frame.empty or len(frame) < 15:
+            return frame
+
+        records = []
+        for code in frame["code"]:
+            quotes = self.storage.get_quotes(code)
+            fin = self.storage.get_financial_history(code)
+            row: dict[str, Any] = {"code": code}
+            if quotes is not None and not quotes.empty:
+                close = pd.to_numeric(quotes.sort_values("trade_date")["close"], errors="coerce").dropna()
+                if len(close) > 60:
+                    row["mom60"] = float(close.iloc[-1] / close.iloc[-61] - 1)
+                amt = pd.to_numeric(quotes["amount"], errors="coerce").tail(20).mean()
+                turn = pd.to_numeric(quotes["turnover"], errors="coerce").tail(20).mean()
+                if amt and turn and turn > 0:
+                    row["size"] = float(np.log(amt / turn))
+            if fin is not None and not fin.empty:
+                fin = fin.sort_values("report_date")
+                for field in ("pe_ttm", "roe", "profit_yoy"):
+                    col = pd.to_numeric(fin.get(field), errors="coerce").dropna() if field in fin else pd.Series(dtype=float)
+                    if not col.empty:
+                        row[field] = float(col.iloc[-1])
+            records.append(row)
+
+        panel = pd.DataFrame(records).set_index("code")
+        sectors = {c: (csi_sector(ind) or ind) for c, ind in zip(frame["code"], frame.get("industry", pd.Series(index=frame.index)))}
+        panel["sector"] = panel.index.map(sectors)
+        tilt = compute_factor_tilt(panel).clip(-3, 3)
+        frame = frame.copy()
+        frame["composite_score"] = frame["composite_score"] + strength * frame["code"].map(tilt).fillna(0.0).to_numpy()
+        return frame
 
     def _build_industry_context(self, stock_info: dict[str, Any], quotes: pd.DataFrame) -> dict[str, Any]:
         from src.industry.sector_map import csi_sector

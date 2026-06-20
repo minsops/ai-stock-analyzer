@@ -38,6 +38,25 @@
 2. 仍待补强的数据/因子：现金流质量、应计、ROE 趋势/毛利稳定性（需更细历史）、**真实主力/北向资金**（需能连东财的服务器 `update-capital`）。
 3. 谨慎：IC ~0.035、IR ~0.3 属「弱而稳」，组合上线务必配合**成本控制 + 低换手 + 市场状态择时**（见 `--timing`），否则交易成本会吃掉这点边际。
 
+## 落地（B-2）：因子倾斜回测 + 接入线上评分
+**回测验证**（`scripts/factor_tilt_backtest.py`，月度 top20，净成本 0.36%/换手，去幸存者偏差）：
+| 变体 | 总收益 | 年化 | 夏普 | 最大回撤 | 胜率 |
+|---|---|---|---|---|---|
+| baseline（现综合分） | +67.0% | +24.1% | 0.85 | -19.0% | 52% |
+| tilt_0.5 | +81.9% | +28.6% | 0.95 | -16.2% | 48% |
+| **tilt_1.0** | +80.1% | +28.1% | **1.03** | **-13.2%** | 55% |
+| combo_only（纯因子组合） | +111.3% | +37.0% | 1.14 | -10.9% | 55% |
+| universe（等权 beta） | +61.7% | +22.4% | 0.88 | -12.8% | 55% |
+
+- **倾斜净改善**：tilt_1.0 vs baseline，年化 +4pt、夏普 +0.18、回撤 -5.8pt——**扣成本后收益、夏普、回撤三者都更好**。
+- baseline 夏普(0.85)还略低于等权 beta(0.88)，再次印证现综合分≈无 alpha；而因子组合有真实(虽弱)的超额。
+- ⚠️ 因子在同段样本选出，combo_only +111% 含同样本选择偏好，**实盘预期弱于此**；但改善面broad+因子经济含义清晰，倾斜方向可信。
+
+**接入线上**（保守、可关、可调）：
+- `src/fusion/factor_tilt.py::compute_factor_tilt()`：截面算 价值+质量+成长+反转 组合 z（行业+市值中性化）。
+- `ranker.scan_all` 排序前给综合分加 `FACTOR_TILT_STRENGTH × clip(z,-3,3)`（`config/settings.py`，默认 **4.0**，温和；设 0 关闭，可经环境变量调）。
+- 仅影响**排序/选股**，不动各引擎分项；默认保守是因为同样本选择有过拟合风险，建议上线后用实盘/滚动样本外持续监控，再决定是否加大强度。
+
 ## 复现
 ```bash
 # 1) 一次性补历史季度财务(point-in-time，baostock，单进程顺序，可中断续跑)
@@ -45,5 +64,7 @@ python scripts/backfill_fundamentals.py 4          # 回看4年
 # 2) 跑因子 IC 研究
 python scripts/factor_research.py                  # IC 表 + 组合对比
 python scripts/factor_research.py 2023-07-01 2026-06-10 --with-composite   # 额外算现综合分 IC(较慢)
-# 明细: data/factor_ic_report.csv
+# 3) 倾斜的净收益回测(决定是否值得接入/调强度)
+python scripts/factor_tilt_backtest.py             # baseline vs tilt vs combo vs universe
+# 明细: data/factor_ic_report.csv;关闭倾斜: FACTOR_TILT_STRENGTH=0
 ```

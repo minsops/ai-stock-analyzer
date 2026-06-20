@@ -119,7 +119,12 @@ python scripts/fetch_backtest_history.py 3 6            # 3年+历史成分股(�
   - `factor_research.py` 稳健判据改 **decay-aware**(全期|IC|>0.025 且 |t|>2 且**两半各自|IC|>0.012同号**),能剔除 lowvol(后半翻负)/lottery(后半衰减到0) 这类市况型。
   - **新结论(更新 §4 的"无 alpha")**：回填后稳健集 = **earnings_yield(低PE) + roe(质量) + profit_yoy(成长) + mom60(60日反转)**,全部两半同号。**IC加权组合样本外 IC=+0.034(IR 0.28)、等权+0.035(IR 0.30)**,≈最优单因子+稳定性更好——比回填前"组合+0.010无增益"明显进步:质量/成长因子真正贡献了独立稳定信号。**仍弱(IC~0.035非强alpha)**,落地需向这组因子轻度倾斜+严格低换手/择时。详见 `docs/FACTOR_RESEARCH.md`。
 
-**总状态：A 部署产品化全部完成 + B 因子框架落地+补历史财务+重测出新结论。81 测试通过。** A 可即部署；B 找到一组弱而稳的多因子组合(价值+质量+成长+反转,样本外IC~0.035)。
+- **[B-2 已完成 · 因子倾斜回测验证 + 接入线上]**：
+  - `scripts/factor_tilt_backtest.py`(月度top20,净成本0.36%/换手):**tilt_1.0 vs baseline → 年化+4pt(28.1%vs24.1%)、夏普+0.18(1.03vs0.85)、回撤-5.8pt(-13.2%vs-19.0%),三者都改善**;combo_only最佳(夏普1.14/回撤-10.9%);baseline夏普还略低于等权universe(再证现综合分≈无alpha)。
+  - 接入线上(保守可关):`src/fusion/factor_tilt.py::compute_factor_tilt`(截面 价值+质量+成长+反转 组合z,行业+市值中性化)+ `ranker.scan_all` 排序前给综合分加 `FACTOR_TILT_STRENGTH×clip(z,±3)`(`config/settings.py` 默认**4.0**温和,设0关,环境变量可调)。只改排序不动引擎分项。`tests/test_fusion/test_factor_tilt.py` 3测试。
+  - ⚠️ 因子同样本选出有过拟合风险→默认保守,建议实盘/滚动样本外监控再决定加强度。**注意:本机沙箱 `scan` 会卡在 get_market_overview(东财网络),`_apply_factor_tilt` 已用真实库数据直测生效(baseline全60→倾斜后48~72,顶低PE/高ROE/反转、压高估值/追涨)。**
+
+**总状态：A 部署产品化全部完成 + B 因子全链路(框架→补历史财务→重测→回测验证→接入线上保守倾斜)。84 测试通过,改动已提交到 feature 分支。** A 可即部署;B 找到弱而稳的多因子组合(价值+质量+成长+反转,样本外IC~0.035)并已接入(默认温和倾斜、可关、可调)。
 
 ## 10. 给新会话的接上提示
 "读 HANDOFF.md + memory/ai-stock-analyzer.md + 仓库。**用户已定先A后B,两边都做完一轮**:A产品化全做完(A-1~A-7:接口健壮/诚实横幅/CSV+自选/容器内调度器/自选提醒/分组/导出维度);B因子IC框架(`scripts/factor_research.py`+`docs/FACTOR_RESEARCH.md`)落地,**已补历史季度财务(`scripts/backfill_fundamentals.py`,回填18628行)并重测**。**B新结论**:回填后稳健集=earnings_yield(低PE)+roe+profit_yoy+mom60反转,IC加权组合样本外IC≈+0.035(弱而稳,非强alpha)。**81测试通过**。可落地方向=综合分向这组因子轻度倾斜+低换手/择时;再往下=补现金流/ROE趋势/真实主力北向(需连东财服务器)。注意:本机沙箱连不上东财且禁用多进程;改源码 `pip install .` 重装或 `python -m src.cli.main`。"
