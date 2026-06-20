@@ -5,12 +5,28 @@ services:
     ports:
       - "8000:8000"
     env_file:
-      - .env.example
+      - .env
     volumes:
       - ./data:/app/data
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health')"]
       interval: 30s
       timeout: 5s
       retries: 3
 
+  # 容器内常驻调度器:每日定时增量更新+评分扫描(替代脆弱的宿主机 crontab)。
+  # 与 api 共享同一镜像与 data 卷,扫描结果落库后 api/仪表盘自动读到最新排行。
+  # 国内服务器可直连东财时加 --with-capital 拉真实主力资金。
+  scheduler:
+    build: .
+    command: ai-stock schedule --update-time 17:30 --scan-time 18:00 --top-n 30 --with-news
+    env_file:
+      - .env
+    environment:
+      TZ: Asia/Shanghai  # 调度时间按北京时间(收盘后);容器默认 UTC 会错 8 小时
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    depends_on:
+      - api

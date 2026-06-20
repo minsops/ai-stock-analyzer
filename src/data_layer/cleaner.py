@@ -69,24 +69,43 @@ class DataCleaner:
     FINANCIAL_COLUMN_MAP = {
         "日期": "report_date",
         "报告期": "report_date",
+        "数据日期": "report_date",
         "trade_date": "report_date",
         "pe_ttm": "pe_ttm",
         "pb": "pb",
         "ps_ttm": "ps_ttm",
+        # 东方财富个股估值 stock_value_em 的列名
+        "PE(TTM)": "pe_ttm",
+        "PE(动)": "pe_ttm",
+        "市盈率(TTM)": "pe_ttm",
+        "市盈率": "pe_ttm",
+        "市净率": "pb",
+        "市销率": "ps_ttm",
+        "市销率(TTM)": "ps_ttm",
         "dv_ttm": "dividend_yield",
         "股息率": "dividend_yield",
+        "股息率(TTM)": "dividend_yield",
         "净资产收益率": "roe",
         "加权净资产收益率": "roe",
+        # 东财/同花顺 stock_financial_analysis_indicator 的真实列名（带百分号后缀）
+        "加权净资产收益率(%)": "roe",
+        "净资产收益率(%)": "roe",
+        "摊薄净资产收益率(%)": "roe",
         "营业总收入": "revenue",
         "营业收入": "revenue",
         "归属母公司股东的净利润": "net_profit",
         "净利润": "net_profit",
         "营业总收入同比增长率": "revenue_yoy",
         "营业收入同比增长率": "revenue_yoy",
+        "主营业务收入增长率(%)": "revenue_yoy",
+        "营业收入增长率(%)": "revenue_yoy",
         "净利润同比增长率": "profit_yoy",
+        "净利润增长率(%)": "profit_yoy",
         "销售毛利率": "gross_margin",
+        "销售毛利率(%)": "gross_margin",
         "毛利率": "gross_margin",
         "资产负债率": "debt_ratio",
+        "资产负债率(%)": "debt_ratio",
         "经营现金流量净额": "free_cash_flow",
     }
 
@@ -218,7 +237,11 @@ class DataCleaner:
     def _rename(self, df: pd.DataFrame, column_map: dict[str, str]) -> pd.DataFrame:
         normalized = df.copy()
         normalized.columns = [str(column).strip() for column in normalized.columns]
-        return normalized.rename(columns={column: column_map[column] for column in normalized.columns if column in column_map})
+        renamed = normalized.rename(columns={column: column_map[column] for column in normalized.columns if column in column_map})
+        # 多个原始列可能映射到同一目标列（如不同来源的 PE 列），去重保留第一个，避免重复列名。
+        if renamed.columns.duplicated().any():
+            renamed = renamed.loc[:, ~renamed.columns.duplicated()]
+        return renamed
 
     def _infer_market(self, code: str | None) -> str | None:
         if not code or pd.isna(code):

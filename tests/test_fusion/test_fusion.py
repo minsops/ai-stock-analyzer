@@ -64,6 +64,22 @@ def test_conflict_resolver_quarantines_large_gap() -> None:
     assert result["action"] == "quarantine"
 
 
+def test_conflict_resolver_downweights_instead_of_min() -> None:
+    # 分歧但未到隔离阈值(gap 45)：保守状态应保留分数、下调置信度(降权)，而非取最小。
+    scores = {"value": ScoreResult(80, 1.0), "trend": ScoreResult(35, 1.0)}
+
+    result = ConflictResolver().resolve(scores, "shock")
+
+    assert result["action"] == "adjusted"
+    adjusted = result["adjusted_scores"]
+    # 分数保留(不被抹平到最小值)
+    assert adjusted["value"].score == 80
+    assert adjusted["trend"].score == 35
+    # 置信度被下调
+    assert adjusted["value"].confidence < 1.0
+    assert adjusted["trend"].confidence < 1.0
+
+
 def test_stock_filter_rejects_low_liquidity() -> None:
     quotes = make_quotes(30)
     quotes["amount"] = 1000

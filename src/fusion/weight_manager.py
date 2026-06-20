@@ -9,11 +9,11 @@ class WeightManager:
     """根据市场状态动态调整各引擎权重。"""
 
     WEIGHT_TABLE = {
-        "bull": {"value": 0.15, "trend": 0.35, "capital": 0.25, "industry": 0.15, "event": 0.10},
-        "bear": {"value": 0.40, "trend": 0.15, "capital": 0.20, "industry": 0.10, "event": 0.15},
-        "shock": {"value": 0.30, "trend": 0.25, "capital": 0.20, "industry": 0.15, "event": 0.10},
-        "extreme_fear": {"value": 0.45, "trend": 0.05, "capital": 0.25, "industry": 0.10, "event": 0.15},
-        "extreme_greed": {"value": 0.20, "trend": 0.20, "capital": 0.30, "industry": 0.15, "event": 0.15},
+        "bull": {"value": 0.13, "trend": 0.32, "capital": 0.22, "industry": 0.13, "event": 0.08, "news": 0.12},
+        "bear": {"value": 0.36, "trend": 0.14, "capital": 0.18, "industry": 0.09, "event": 0.13, "news": 0.10},
+        "shock": {"value": 0.27, "trend": 0.23, "capital": 0.18, "industry": 0.13, "event": 0.09, "news": 0.10},
+        "extreme_fear": {"value": 0.40, "trend": 0.05, "capital": 0.22, "industry": 0.08, "event": 0.13, "news": 0.12},
+        "extreme_greed": {"value": 0.18, "trend": 0.18, "capital": 0.27, "industry": 0.13, "event": 0.12, "news": 0.12},
     }
 
     def get_weights(self, regime: str) -> dict[str, float]:

@@ -49,8 +49,11 @@ class StockFilter:
             if self.rules["min_pe_ttm"] is not None and pe < self.rules["min_pe_ttm"]:
                 return False, f"PE {pe:.2f} 低于阈值"
 
+        # 金融业(银行/保险/证券)天然高杠杆(资产负债率常 >90%)，不适用一般负债率上限。
+        industry_name = str(stock_info.get("industry_l1") or "")
+        is_financial = any(keyword in industry_name for keyword in ("银行", "保险", "证券", "金融", "货币", "资本市场"))
         debt_ratio = financial.get("debt_ratio")
-        if debt_ratio is not None and pd.notna(debt_ratio) and debt_ratio > self.rules["max_debt_ratio"]:
+        if not is_financial and debt_ratio is not None and pd.notna(debt_ratio) and debt_ratio > self.rules["max_debt_ratio"]:
             return False, f"资产负债率 {debt_ratio:.2f}% 高于阈值"
         return True, "通过过滤"
 

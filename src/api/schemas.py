@@ -26,6 +26,8 @@ class ScoreReport(BaseModel):
     code: str
     name: str
     composite_score: float
+    available_engines: int | None = None
+    total_engines: int | None = None
     regime: str
     weights: dict[str, float]
     engine_scores: dict[str, EngineScoreDetail]
@@ -83,4 +85,6 @@ class BacktestRequest(BaseModel):
     rebalance_freq: str = "monthly"
     top_n: int = 10
     position_rule: str = "equal"
+    # selection: "score"（系统综合评分）或 "momentum"（动量基准）
+    selection: str = "score"
 

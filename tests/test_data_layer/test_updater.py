@@ -8,7 +8,7 @@ from src.data_layer import DataStorage, DataUpdater
 
 
 class FakeFetcher:
-    def get_stock_list(self) -> pd.DataFrame:
+    def get_stock_list(self, with_industry: bool = True) -> pd.DataFrame:
         return pd.DataFrame(
             {
                 "code": ["000001"],
@@ -56,6 +56,27 @@ class FakeFetcher:
             }
         )
 
+    def _normalize_code(self, code: str) -> str:
+        digits = "".join(ch for ch in str(code) if ch.isdigit())
+        return digits[-6:] if len(digits) >= 6 else digits
+
+
+class MultiStockFetcher(FakeFetcher):
+    def get_stock_list(self, with_industry: bool = True) -> pd.DataFrame:
+        codes = [f"00000{i}" for i in range(1, 6)]
+        return pd.DataFrame(
+            {
+                "code": codes,
+                "name": codes,
+                "market": ["SZ"] * len(codes),
+                "industry_l1": [None] * len(codes),
+                "industry_l2": [None] * len(codes),
+                "list_date": [date(1991, 4, 3)] * len(codes),
+                "is_st": [False] * len(codes),
+                "is_active": [True] * len(codes),
+            }
+        )
+
 
 def test_data_updater_full_update_writes_all_tables() -> None:
     storage = DataStorage("sqlite:///:memory:")
@@ -68,3 +89,20 @@ def test_data_updater_full_update_writes_all_tables() -> None:
     assert summary.capital == 1
     assert summary.industry_index == 1
     assert storage.get_stock_info("000001")["name"] == "平安银行"
+
+
+def test_data_updater_sample_limits_universe() -> None:
+    storage = DataStorage("sqlite:///:memory:")
+
+    summary = DataUpdater(MultiStockFetcher(), storage).update(sample=2)
+
+    assert summary.stocks == 5  # 股票列表整体写入
+    assert summary.quotes == 2  # 仅更新前 2 只的行情
+
+
+def test_data_updater_codes_targets_specific_stocks() -> None:
+    storage = DataStorage("sqlite:///:memory:")
+
+    summary = DataUpdater(MultiStockFetcher(), storage).update(codes=["000003"])
+
+    assert summary.quotes == 1

@@ -28,6 +28,34 @@ FETCH_TIMEOUT_SECONDS = int(os.getenv("FETCH_TIMEOUT_SECONDS", "30"))
 CACHE_TTL_HOURS = int(os.getenv("DATA_CACHE_TTL_HOURS", "12"))
 DATA_CACHE_DIR = Path(os.getenv("DATA_CACHE_DIR", str(RAW_DATA_DIR)))
 
+# 数据更新并发（网络 I/O 密集，适度并发可显著提速）
+UPDATE_MAX_WORKERS = int(os.getenv("UPDATE_MAX_WORKERS", "8"))
+INDUSTRY_MAP_MAX_WORKERS = int(os.getenv("INDUSTRY_MAP_MAX_WORKERS", "8"))
+
+# A股行情数据域名直连：很多用户开了 Clash/VPN 全局代理，会把这些国内行情请求
+# 也代理到境外，导致连接被重置（RemoteDisconnected）。这里把它们加入 NO_PROXY，
+# 让 requests/httpx 对这些域名直连，绕过系统/全局代理。设 AKSHARE_BYPASS_PROXY=0 可关闭。
+AKSHARE_DIRECT_DOMAINS = os.getenv(
+    "AKSHARE_DIRECT_DOMAINS",
+    "eastmoney.com,push2.eastmoney.com,push2his.eastmoney.com,sina.com.cn,sinajs.cn,qq.com,legulegu.com,hexun.com,cninfo.com.cn",
+)
+if os.getenv("AKSHARE_BYPASS_PROXY", "1") == "1":
+    _existing_no_proxy = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
+    _merged_no_proxy = ",".join(part for part in (_existing_no_proxy, AKSHARE_DIRECT_DOMAINS) if part)
+    os.environ["NO_PROXY"] = _merged_no_proxy
+    os.environ["no_proxy"] = _merged_no_proxy
+
+# DeepSeek API（OpenAI 兼容的 chat/completions 接口）
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
+DEEPSEEK_TIMEOUT_SECONDS = int(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "60"))
+DEEPSEEK_TEMPERATURE = float(os.getenv("DEEPSEEK_TEMPERATURE", "0.3"))
+# deepseek-chat 现为混合推理模型，会先产出 reasoning_content 再产出 content，
+# token 预算要足够大，否则推理吃满 max_tokens 导致 content 为空。
+DEEPSEEK_MAX_TOKENS = int(os.getenv("DEEPSEEK_MAX_TOKENS", "3000"))
+DEEPSEEK_RETRY_TIMES = int(os.getenv("DEEPSEEK_RETRY_TIMES", "2"))
+
 # 评分引擎
 LOOKBACK_TRADING_DAYS = 250
 VALUATION_LOOKBACK_YEARS = 5
@@ -50,12 +78,14 @@ QUARANTINE_THRESHOLD = 60
 # 仓位管理
 MAX_SINGLE_POSITION = 0.20
 MAX_INDUSTRY_POSITION = 0.40
+# 各市场状态下的总仓位上限(自动按牛/震荡/熊/极恐切换，控制回撤而不过度牺牲牛市收益)。
+# "进取"档经回测在控回撤与保收益之间最平衡(3年回撤 -15% vs 满仓 -19%，收益 110% vs 121%)。
 REGIME_TOTAL_POSITION = {
-    "bull": 0.80,
-    "shock": 0.60,
+    "bull": 1.00,
+    "shock": 0.80,
     "bear": 0.40,
-    "extreme_fear": 0.20,
-    "extreme_greed": 0.50,
+    "extreme_fear": 0.10,   # 极度恐慌(近 3 日急跌)近乎清仓，最大化回撤保护
+    "extreme_greed": 0.60,
 }
 
 # 回测
@@ -80,4 +110,3 @@ def ensure_directories() -> None:
 
 
 ensure_directories()
-

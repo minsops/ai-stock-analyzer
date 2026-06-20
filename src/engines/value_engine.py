@@ -44,10 +44,10 @@ class ValueEngine(BaseEngine):
         if not pd.isna(pb_percentile):
             signals.append(f"PB 处于历史 {pb_percentile:.0%} 分位")
 
-        roe = self._get_financial_value(financial, "roe")
-        revenue_yoy = self._get_financial_value(financial, "revenue_yoy")
-        profit_yoy = self._get_financial_value(financial, "profit_yoy")
-        dividend_yield = self._get_financial_value(financial, "dividend_yield")
+        roe = self._value_or_history(financial, history, "roe")
+        revenue_yoy = self._value_or_history(financial, history, "revenue_yoy")
+        profit_yoy = self._value_or_history(financial, history, "profit_yoy")
+        dividend_yield = self._value_or_history(financial, history, "dividend_yield")
 
         scores["roe"] = self._normalize(roe, 0, 20) if not pd.isna(roe) else np.nan
         scores["revenue_yoy"] = self._normalize(revenue_yoy, -20, 30) if not pd.isna(revenue_yoy) else np.nan
@@ -61,6 +61,20 @@ class ValueEngine(BaseEngine):
             signals.append(f"净利同比 {profit_yoy:.2f}%")
 
         return self._weighted_result(scores, self.WEIGHTS, details, signals, total_items=len(self.WEIGHTS))
+
+    def _value_or_history(self, financial: dict[str, Any] | pd.DataFrame, history: pd.DataFrame | None, key: str) -> float:
+        """优先取最新财务值；为空时回退到历史序列的最近非空值。
+
+        避免不同来源(估值仅月线 vs 季度基本面)落在不同 report_date，导致最新一行缺少 roe 等字段。
+        """
+        value = self._get_financial_value(financial, key)
+        if not pd.isna(value):
+            return value
+        if isinstance(history, pd.DataFrame) and not history.empty and key in history:
+            series = pd.to_numeric(history[key], errors="coerce").dropna()
+            if not series.empty:
+                return float(series.iloc[-1])
+        return np.nan
 
     def _metric_percentile(self, financial: dict[str, Any] | pd.DataFrame, history: pd.DataFrame | None, metric: str) -> float:
         current = self._get_financial_value(financial, metric)

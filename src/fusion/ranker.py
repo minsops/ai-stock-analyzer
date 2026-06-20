@@ -16,6 +16,7 @@ from src.fusion.conflict_resolver import ConflictResolver
 from src.fusion.filter import StockFilter
 from src.fusion.regime_detector import RegimeDetector
 from src.fusion.weight_manager import WeightManager
+from src.risk.trade_plan import TradePlan
 from src.valuation.historical import HistoricalValuation
 
 
@@ -66,6 +67,7 @@ class StockRanker:
             "financial_history": financial_history,
             "capital": capital,
             "industry": self._build_industry_context(stock_info, quotes),
+            "news": self.storage.get_recent_news(code),
         }
         engine_scores = {engine.name: engine.score(code, context) for engine in self.engines}
         conflict_result = self.conflict_resolver.resolve(engine_scores, regime)
@@ -73,19 +75,31 @@ class StockRanker:
         quarantined = conflict_result["action"] == "quarantine"
         composite = 0.0 if quarantined or not filter_passed else self.weight_manager.compute_composite(adjusted_scores, regime)
 
+        pe_valuation = self.historical_valuation.compute_percentile(code, "pe_ttm")
         valuation = {
-            "pe_percentile": self.historical_valuation.compute_percentile(code, "pe_ttm").get("percentile"),
+            "pe_percentile": pe_valuation.get("percentile"),
             "pb_percentile": self.historical_valuation.compute_percentile(code, "pb").get("percentile"),
         }
+        trade_plan = TradePlan().build(composite, quotes, pe_valuation)
+        # 实际参与综合评分的引擎数：信号越薄(参与越少)，综合分越不可靠。
+        available_engines = sum(1 for result in adjusted_scores.values() if result.available)
+        recent_news = [
+            {"pub_date": str(item.get("pub_date", "")), "title": item.get("title", "")}
+            for item in (context.get("news") or [])[:8]
+        ]
         return {
             "code": code,
             "name": stock_info.get("name", code),
             "industry": stock_info.get("industry_l1"),
             "composite_score": composite,
+            "recent_news": recent_news,
+            "available_engines": available_engines,
+            "total_engines": len(self.engines),
             "regime": regime,
             "regime_confidence": regime_confidence,
             "regime_details": regime_details,
             "weights": self.weight_manager.get_weights(regime),
+            "trade_plan": trade_plan,
             "engine_scores": {name: result.to_dict() for name, result in adjusted_scores.items()},
             "conflicts": conflict_result["conflicts"],
             "conflict_action": conflict_result["action"],
@@ -131,7 +145,10 @@ class StockRanker:
         return result
 
     def _build_industry_context(self, stock_info: dict[str, Any], quotes: pd.DataFrame) -> dict[str, Any]:
-        industry_name = stock_info.get("industry_l1")
+        from src.industry.sector_map import csi_sector
+
+        # 个股证监会行业 → 中证一级行业(industry_index 表里存的是中证一级)。
+        industry_name = csi_sector(stock_info.get("industry_l1")) or stock_info.get("industry_l1")
         if not industry_name:
             return {}
         all_history = self.storage.get_all_industry_history()

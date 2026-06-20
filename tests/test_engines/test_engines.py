@@ -5,7 +5,7 @@ from datetime import date, timedelta
 import numpy as np
 import pandas as pd
 
-from src.engines import CapitalEngine, EventEngine, IndustryEngine, TrendEngine, ValueEngine
+from src.engines import CapitalEngine, EventEngine, IndustryEngine, NewsEngine, TrendEngine, ValueEngine
 
 
 def make_quotes(days: int = 160) -> pd.DataFrame:
@@ -86,6 +86,25 @@ def test_industry_engine_scores_supplied_industry_context() -> None:
 
     assert result.available
     assert 0 <= result.score <= 100
+
+
+def test_news_engine_scores_positive_and_negative() -> None:
+    bullish = NewsEngine().score("000001", {"news": [
+        {"title": "某公司关于回购股份的公告"}, {"title": "某公司中标重大项目"}, {"title": "业绩预增公告"},
+    ]})
+    bearish = NewsEngine().score("000001", {"news": [
+        {"title": "控股股东减持公告"}, {"title": "关于收到监管问询函的公告"}, {"title": "公司涉及诉讼"},
+    ]})
+
+    assert bullish.available and bearish.available
+    assert bullish.score > 60 and bearish.score < 40
+    assert bullish.details["positive"] >= 2 and bearish.details["negative"] >= 2
+
+
+def test_news_engine_unavailable_without_news() -> None:
+    result = NewsEngine().score("000001", {"news": []})
+
+    assert not result.available
 
 
 def test_event_engine_scores_limit_and_volatility() -> None:

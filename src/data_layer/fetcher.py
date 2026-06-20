@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
-from functools import wraps
 import time
 from typing import Any, Callable, TypeVar
 
@@ -38,21 +38,26 @@ class StockDataFetcher:
             self._ak = ak
         return self._ak
 
-    def get_stock_list(self) -> pd.DataFrame:
-        """获取全部 A 股股票列表。"""
-        cache_key = f"stock_list:{date.today():%Y%m%d}"
+    def get_stock_list(self, with_industry: bool = True) -> pd.DataFrame:
+        """获取全部 A 股股票列表。
+
+        with_industry=False 时跳过昂贵的行业成分股映射（按板块逐个拉取），
+        适合只需要代码/名称的快速场景。
+        """
+        cache_key = f"stock_list:{date.today():%Y%m%d}:{'ind' if with_industry else 'noind'}"
         cached = self.cache.get(cache_key)
         if cached is not None:
             return cached
 
-        df = self._safe_call("获取股票列表", self.ak.stock_zh_a_spot_em)
+        df = self._safe_call("获取股票列表", "stock_zh_a_spot_em")
         if df.empty:
             return self.cleaner.clean_stocks(df)
 
         stocks = self.cleaner.clean_stocks(df)
-        industry_map = self._get_industry_map()
-        if industry_map:
-            stocks["industry_l1"] = stocks["code"].map(industry_map).combine_first(stocks["industry_l1"])
+        if with_industry:
+            industry_map = self._get_industry_map()
+            if industry_map:
+                stocks["industry_l1"] = stocks["code"].map(industry_map).combine_first(stocks["industry_l1"])
         self.cache.set(cache_key, stocks)
         return stocks
 
@@ -66,7 +71,7 @@ class StockDataFetcher:
 
         df = self._safe_call(
             f"获取日线数据 {normalized_code}",
-            self.ak.stock_zh_a_hist,
+            "stock_zh_a_hist",
             symbol=normalized_code,
             period="daily",
             start_date=start_date,
@@ -87,14 +92,18 @@ class StockDataFetcher:
         if cached is not None:
             return cached
 
+        start_year = str(date.today().year - settings.VALUATION_LOOKBACK_YEARS - 1)
         indicator = self._safe_call(
             f"获取财务分析指标 {normalized_code}",
-            self.ak.stock_financial_analysis_indicator,
+            "stock_financial_analysis_indicator",
             symbol=normalized_code,
+            start_year=start_year,
         )
+        # AKShare 1.18+ 已移除 legulegu 的 stock_a_lg_indicator，
+        # 改用东方财富个股估值 stock_value_em（PE/PB/PS 等历史）。
         valuation = self._safe_call(
             f"获取估值指标 {normalized_code}",
-            self.ak.stock_a_lg_indicator,
+            "stock_value_em",
             symbol=normalized_code,
         )
 
@@ -116,7 +125,7 @@ class StockDataFetcher:
         market = "sh" if normalized_code.startswith("6") else "sz"
         flow = self._safe_call(
             f"获取资金流向 {normalized_code}",
-            self.ak.stock_individual_fund_flow,
+            "stock_individual_fund_flow",
             stock=normalized_code,
             market=market,
         )
@@ -134,7 +143,7 @@ class StockDataFetcher:
         if cached is not None:
             return cached
 
-        boards = self._safe_call("获取行业板块列表", self.ak.stock_board_industry_name_em)
+        boards = self._safe_call("获取行业板块列表", "stock_board_industry_name_em")
         if boards.empty:
             return self.cleaner.clean_industry_index(boards)
 
@@ -144,7 +153,7 @@ class StockDataFetcher:
             code = str(row.get("板块代码") or row.get("代码") or name)
             if not name:
                 continue
-            hist = self._safe_call(f"获取行业历史 {name}", self.ak.stock_board_industry_hist_em, symbol=name)
+            hist = self._safe_call(f"获取行业历史 {name}", "stock_board_industry_hist_em", symbol=name)
             if hist.empty:
                 continue
             hist["板块代码"] = code
@@ -168,14 +177,12 @@ class StockDataFetcher:
         start = end - timedelta(days=120)
         hs300 = self._safe_call(
             "获取沪深300指数",
-            self.ak.stock_zh_index_daily,
+            "stock_zh_index_daily",
             symbol="sh000300",
         )
-        spot = self._safe_call("获取全市场快照", self.ak.stock_zh_a_spot_em)
-        north_func = getattr(self.ak, "stock_hsgt_north_net_flow_in_em", None)
-        north = self._safe_call("获取北向资金", north_func) if north_func else pd.DataFrame()
-        if north_func is None:
-            logger.warning("AKShare 当前版本缺少北向资金接口，已跳过")
+        spot = self._safe_call("获取全市场快照", "stock_zh_a_spot_em")
+        # 接口名按版本解析，缺失时 _safe_call 返回空。
+        north = self._safe_call("获取北向资金", "stock_hsgt_north_net_flow_in_em")
 
         if not hs300.empty and "date" in hs300.columns:
             hs300["date"] = pd.to_datetime(hs300["date"], errors="coerce").dt.date
@@ -192,11 +199,17 @@ class StockDataFetcher:
             self.cache.set(cache_key, pd.DataFrame([overview]))
         return overview
 
-    def _safe_call(self, description: str, func: Callable[..., pd.DataFrame], *args: Any, **kwargs: Any) -> pd.DataFrame:
+    def _safe_call(self, description: str, func: Callable[..., pd.DataFrame] | str, *args: Any, **kwargs: Any) -> pd.DataFrame:
+        # func 允许传 AKShare 接口名（字符串）：不同 AKShare 版本接口增删频繁，
+        # 按名解析可在接口缺失时优雅降级为空数据，而不是抛 AttributeError 中断整条链路。
+        resolved = getattr(self.ak, func, None) if isinstance(func, str) else func
+        if resolved is None:
+            logger.warning(f"{description}: 当前 AKShare 版本缺少接口 {func}，已跳过")
+            return _empty_df()
         for attempt in range(1, settings.FETCH_RETRY_TIMES + 1):
             try:
                 time.sleep(settings.FETCH_DELAY_SECONDS)
-                df = func(*args, **kwargs)
+                df = resolved(*args, **kwargs)
                 if df is None or df.empty:
                     logger.warning(f"{description} 返回空数据")
                     return _empty_df()
@@ -214,27 +227,43 @@ class StockDataFetcher:
         if cached is not None and not cached.empty:
             return dict(zip(cached["code"], cached["industry"], strict=False))
 
-        boards = self._safe_call("获取行业板块列表", self.ak.stock_board_industry_name_em)
+        boards = self._safe_call("获取行业板块列表", "stock_board_industry_name_em")
         mapping: dict[str, str] = {}
         if boards.empty:
             return mapping
 
-        for _, row in boards.iterrows():
-            industry = str(row.get("板块名称") or row.get("名称") or "")
-            if not industry:
-                continue
-            constituents = self._safe_call(f"获取行业成分股 {industry}", self.ak.stock_board_industry_cons_em, symbol=industry)
-            if constituents.empty:
-                continue
-            code_column = "代码" if "代码" in constituents.columns else "股票代码" if "股票代码" in constituents.columns else None
-            if code_column is None:
-                continue
-            for code in constituents[code_column].astype(str).str.extract(r"(\d{6})", expand=False).dropna():
-                mapping[code] = industry
+        industries = [
+            name
+            for name in (str(row.get("板块名称") or row.get("名称") or "") for _, row in boards.iterrows())
+            if name
+        ]
+
+        # 行业成分股逐板块拉取是整个数据更新最慢的一步（数十次网络请求），
+        # 改为并发拉取以显著缩短首次建图时间。
+        workers = max(1, settings.INDUSTRY_MAP_MAX_WORKERS)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(self._fetch_industry_constituents, name): name for name in industries}
+            for future in as_completed(futures):
+                industry = futures[future]
+                for code in future.result():
+                    mapping[code] = industry
 
         if mapping:
             self.cache.set(cache_key, pd.DataFrame({"code": list(mapping), "industry": list(mapping.values())}))
         return mapping
+
+    def _fetch_industry_constituents(self, industry: str) -> list[str]:
+        constituents = self._safe_call(
+            f"获取行业成分股 {industry}", "stock_board_industry_cons_em", symbol=industry
+        )
+        if constituents.empty:
+            return []
+        code_column = (
+            "代码" if "代码" in constituents.columns else "股票代码" if "股票代码" in constituents.columns else None
+        )
+        if code_column is None:
+            return []
+        return list(constituents[code_column].astype(str).str.extract(r"(\d{6})", expand=False).dropna())
 
     def _merge_financial_frames(self, financial: pd.DataFrame, valuation: pd.DataFrame, code: str) -> pd.DataFrame:
         if financial.empty and valuation.empty:

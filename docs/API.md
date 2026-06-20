@@ -9,6 +9,7 @@
 ## 个股
 
 - `GET /api/v1/stock/{code}/score`
+- `GET /api/v1/stock/{code}/ai-analysis`（先做规则评分，再调用 DeepSeek 生成自然语言研判；未配置 Key 时 `analysis.available=false` 优雅降级）
 - `GET /api/v1/stock/{code}/valuation`
 - `GET /api/v1/stock/{code}/chart-data?period=60d|120d|1y`
 
@@ -34,8 +35,12 @@
   "end_date": "2025-12-31",
   "initial_capital": 100000,
   "rebalance_freq": "monthly",
-  "top_n": 10
+  "top_n": 10,
+  "selection": "score"
 }
 ```
+
+`selection` 为 `score` 时按系统综合评分（与推荐逻辑一致）做时间点(point-in-time)选股调仓；
+为 `momentum` 时使用 60 日动量作为基准对照。
 
 阶段二/三的调度、通知、模拟券商、执行引擎和模拟盘目前作为 Python 服务模块提供，默认不暴露真实交易 API。

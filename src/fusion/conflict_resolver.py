@@ -12,6 +12,8 @@ class ConflictResolver:
 
     CONFLICT_THRESHOLD = 40
     QUARANTINE_THRESHOLD = 60
+    # 震荡/保守状态下，分歧引擎的置信度下调系数(降权而非取最小)。
+    CONFLICT_CONFIDENCE_PENALTY = 0.5
     PRIORITY_BY_REGIME = {
         "bull": "trend",
         "bear": "value",
@@ -50,11 +52,18 @@ class ConflictResolver:
         adjusted = {key: value for key, value in scores.items()}
         priority = self.PRIORITY_BY_REGIME.get(regime, "conservative")
         if priority == "conservative":
-            for conflict in conflicts:
-                lower = min(conflict["score_a"], conflict["score_b"])
-                for engine in (conflict["engine_a"], conflict["engine_b"]):
-                    original = adjusted[engine]
-                    adjusted[engine] = ScoreResult(lower, original.confidence, original.details, original.signals, original.available)
+            # 降权而非取最小：分歧引擎保留各自分数，但置信度下调，从而在综合分里自动降权，
+            # 避免把真实信号(如深度低估)直接抹平。
+            conflicted = {engine for conflict in conflicts for engine in (conflict["engine_a"], conflict["engine_b"])}
+            for engine in conflicted:
+                original = adjusted[engine]
+                adjusted[engine] = ScoreResult(
+                    original.score,
+                    round(original.confidence * self.CONFLICT_CONFIDENCE_PENALTY, 4),
+                    original.details,
+                    [*original.signals, "与其他引擎分歧，置信度下调"],
+                    original.available,
+                )
         elif priority in adjusted:
             for conflict in conflicts:
                 for engine in (conflict["engine_a"], conflict["engine_b"]):

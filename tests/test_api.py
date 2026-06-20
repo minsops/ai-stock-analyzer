@@ -140,7 +140,7 @@ def test_scan_endpoints(monkeypatch) -> None:
 
 def test_ranking_endpoint(monkeypatch) -> None:
     monkeypatch.setattr(ranking, "get_storage", lambda: FakeStorage())
-    monkeypatch.setattr(ranking, "get_fetcher", lambda: FakeFetcher())
+    monkeypatch.setattr(ranking, "get_current_regime", lambda: ("shock", 0.65, {}))
 
     response = client.get("/api/v1/ranking?date=2026-06-02&top_n=1")
 
@@ -151,7 +151,7 @@ def test_ranking_endpoint(monkeypatch) -> None:
 
 
 def test_regime_endpoint(monkeypatch) -> None:
-    monkeypatch.setattr(regime, "get_fetcher", lambda: FakeFetcher())
+    monkeypatch.setattr(regime, "get_current_regime", lambda: ("shock", 0.65, {"ma20": 1.0}))
 
     response = client.get("/api/v1/regime")
 
@@ -175,3 +175,116 @@ def test_backtest_endpoint(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()["metrics"]["trading_days"] == 0
+
+
+def test_ranking_csv_export(monkeypatch) -> None:
+    monkeypatch.setattr(ranking, "get_storage", lambda: FakeStorage())
+
+    response = client.get("/api/v1/ranking/export.csv?top_n=5")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert "attachment" in response.headers["content-disposition"]
+    body = response.content.decode("utf-8-sig")
+    lines = [line for line in body.splitlines() if line]
+    assert lines[0].split(",")[:3] == ["排名", "代码", "名称"]
+    assert lines[1].startswith("1,000001,平安银行")
+
+
+class FakeWatchStorage:
+    def __init__(self) -> None:
+        self._items: list[dict] = []
+
+    def add_to_watchlist(self, code, note=None, group_name=None, alert_above=None, alert_below=None) -> bool:
+        for it in self._items:
+            if it["code"] == code:
+                if group_name is not None:
+                    it["group_name"] = group_name
+                if alert_above is not None:
+                    it["alert_above"] = alert_above
+                if alert_below is not None:
+                    it["alert_below"] = alert_below
+                return False
+        self._items.insert(0, {"code": code, "note": note, "group_name": group_name or "默认", "alert_above": alert_above, "alert_below": alert_below})
+        return True
+
+    def remove_from_watchlist(self, code: str) -> bool:
+        before = len(self._items)
+        self._items = [it for it in self._items if it["code"] != code]
+        return len(self._items) < before
+
+    def get_watchlist_full(self) -> list[dict]:
+        return list(self._items)
+
+    def check_watchlist_alerts(self) -> list[dict]:
+        out = []
+        for it in self._items:
+            score = self.get_latest_score(it["code"]).get("composite_score")
+            if score is None:
+                continue
+            if it.get("alert_above") is not None and score >= it["alert_above"]:
+                out.append({"code": it["code"], "score": score, "type": "above", "threshold": it["alert_above"]})
+            elif it.get("alert_below") is not None and score <= it["alert_below"]:
+                out.append({"code": it["code"], "score": score, "type": "below", "threshold": it["alert_below"]})
+        return out
+
+    def get_stock_info(self, code: str) -> dict:
+        return {"name": "平安银行", "industry_l1": "银行"}
+
+    def get_latest_score(self, code: str) -> dict:
+        return {"composite_score": 72.5, "score_date": date(2026, 6, 2)} if code == "000001" else {}
+
+
+def test_watchlist_crud(monkeypatch) -> None:
+    from src.api.routes import watchlist
+
+    store = FakeWatchStorage()
+    monkeypatch.setattr(watchlist, "get_storage", lambda: store)
+
+    assert client.get("/api/v1/watchlist").json()["count"] == 0
+
+    added = client.post("/api/v1/watchlist", json={"code": "000001"})
+    assert added.status_code == 200 and added.json()["added"] is True
+    # 重复加入不报错，added=False
+    assert client.post("/api/v1/watchlist", json={"code": "000001"}).json()["added"] is False
+    client.post("/api/v1/watchlist", json={"code": "600519"})
+
+    listed = client.get("/api/v1/watchlist").json()
+    assert listed["count"] == 2
+    # 有评分的排在前
+    assert listed["items"][0]["code"] == "000001"
+    assert listed["items"][0]["composite_score"] == 72.5
+    assert listed["items"][1]["composite_score"] is None
+
+    removed = client.delete("/api/v1/watchlist/000001")
+    assert removed.json()["removed"] is True
+    assert client.get("/api/v1/watchlist").json()["count"] == 1
+
+
+def test_watchlist_groups_and_alerts(monkeypatch) -> None:
+    from src.api.routes import watchlist
+
+    store = FakeWatchStorage()
+    monkeypatch.setattr(watchlist, "get_storage", lambda: store)
+
+    # 设分组 + 评分≥70 提醒(000001 评分 72.5 → 应触发)
+    client.post("/api/v1/watchlist", json={"code": "000001", "group_name": "核心", "alert_above": 70})
+    client.post("/api/v1/watchlist", json={"code": "600519", "group_name": "观察"})
+
+    listed = client.get("/api/v1/watchlist").json()
+    group_names = {g["name"] for g in listed["groups"]}
+    assert group_names == {"核心", "观察"}
+    core = next(it for it in listed["items"] if it["code"] == "000001")
+    assert core["group"] == "核心" and core["alert_triggered"] == "above"
+
+    alerts = client.get("/api/v1/watchlist/alerts").json()
+    assert alerts["count"] == 1
+    assert alerts["alerts"][0]["code"] == "000001" and alerts["alerts"][0]["name"] == "平安银行"
+
+
+def test_watchlist_add_empty_code(monkeypatch) -> None:
+    from src.api.routes import watchlist
+
+    monkeypatch.setattr(watchlist, "get_storage", lambda: FakeWatchStorage())
+    resp = client.post("/api/v1/watchlist", json={"code": "  "})
+    assert resp.json()["ok"] is False

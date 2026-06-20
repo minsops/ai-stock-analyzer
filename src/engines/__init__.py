@@ -4,6 +4,7 @@ from src.engines.base_engine import BaseEngine, ScoreResult
 from src.engines.capital_engine import CapitalEngine
 from src.engines.event_engine import EventEngine
 from src.engines.industry_engine import IndustryEngine
+from src.engines.news_engine import NewsEngine
 from src.engines.trend_engine import TrendEngine
 from src.engines.value_engine import ValueEngine
 
@@ -15,4 +16,5 @@ __all__ = [
     "CapitalEngine",
     "IndustryEngine",
     "EventEngine",
+    "NewsEngine",
 ]
