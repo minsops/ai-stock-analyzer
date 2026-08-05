@@ -107,3 +107,103 @@ def test_backtest_score_selection_uses_engines() -> None:
     first_with_holding = next(pos for pos in result.positions if pos["holdings"])
     assert first_with_holding["turnover"] == 1.0
 
+
+def test_backtest_returns_empty_result_without_prices() -> None:
+    storage = DataStorage("sqlite:///:memory:")
+    storage.init_db()
+
+    result = BacktestSimulator(storage).run(
+        {"start_date": "2025-01-01", "end_date": "2025-03-01"}
+    )
+
+    assert result.equity_curve.empty
+    assert result.positions == []
+    assert result.metrics["trading_days"] == 0
+
+
+def test_backtest_helpers_use_point_in_time_membership_and_weekly_rebalance() -> None:
+    simulator = BacktestSimulator(DataStorage("sqlite:///:memory:"))
+    membership = {
+        date(2025, 2, 1): {"000001"},
+        date(2025, 3, 1): {"000002"},
+    }
+    dates = pd.date_range("2025-01-01", periods=15, freq="D")
+
+    assert simulator._members_asof(membership, date(2025, 1, 1)) == {"000001"}
+    assert simulator._members_asof(membership, date(2025, 3, 15)) == {"000002"}
+    weekly = simulator._rebalance_dates(dates, "weekly")
+    monthly = simulator._rebalance_dates(dates, "monthly")
+    assert len(weekly) == 3
+    assert monthly == {date(2025, 1, 1)}
+
+
+def test_backtest_exposure_series_covers_market_regimes() -> None:
+    simulator = BacktestSimulator(DataStorage("sqlite:///:memory:"))
+    tiers = {"bull": 1.0, "bear": 0.4, "shock": 0.8, "extreme_fear": 0.1}
+    index = pd.date_range("2025-01-01", periods=70, freq="D")
+
+    rising = pd.DataFrame({"000001": np.linspace(100.0, 140.0, 70)}, index=index)
+    falling = pd.DataFrame({"000001": np.linspace(140.0, 100.0, 70)}, index=index)
+    panic_values = np.concatenate([np.linspace(100.0, 110.0, 66), [110.0, 108.0, 104.0, 99.0]])
+    panic = pd.DataFrame({"000001": panic_values}, index=index)
+
+    rising_exposure = simulator._exposure_series(rising, tiers)
+    falling_exposure = simulator._exposure_series(falling, tiers)
+    panic_exposure = simulator._exposure_series(panic, tiers)
+
+    assert rising_exposure[index[0].date()] == 0.8
+    assert rising_exposure[index[-1].date()] == 1.0
+    assert falling_exposure[index[-1].date()] == 0.4
+    assert panic_exposure[index[-1].date()] == 0.1
+
+
+def test_backtest_composite_scores_fall_back_to_momentum_without_quotes() -> None:
+    simulator = BacktestSimulator(DataStorage("sqlite:///:memory:"))
+    index = pd.date_range("2025-01-01", periods=61, freq="D")
+    prices = pd.DataFrame(
+        {
+            "000001": np.linspace(10.0, 15.0, 61),
+            "000002": np.linspace(10.0, 11.0, 61),
+        },
+        index=index,
+    )
+
+    scores = simulator._composite_scores(
+        prices,
+        quotes_by_code={},
+        financials_by_code={},
+        stock_sector={},
+        industry_hist=pd.DataFrame(),
+        current_date=index[-1].date(),
+        regime="shock",
+    )
+
+    assert scores.index.tolist() == ["000001", "000002"]
+    assert scores.iloc[0] > scores.iloc[1]
+
+
+def test_backtest_slices_financials_and_computes_industry_strength_as_of_date() -> None:
+    simulator = BacktestSimulator(DataStorage("sqlite:///:memory:"))
+    current = date(2025, 2, 1)
+    financials = pd.DataFrame(
+        {
+            "report_date": [date(2024, 12, 31), date(2025, 3, 31)],
+            "roe": [10.0, 20.0],
+        }
+    )
+    start = date(2025, 1, 1)
+    industry = pd.DataFrame(
+        {
+            "industry_name": ["银行"] * 22,
+            "trade_date": [start + timedelta(days=i) for i in range(22)],
+            "close": np.linspace(100.0, 121.0, 22),
+        }
+    )
+
+    sliced = simulator._slice_financials(financials, current)
+    returns, ranks = simulator._industry_strength_asof(industry, current)
+
+    assert sliced["roe"].tolist() == [10.0]
+    assert np.isclose(returns["银行"], 121.0 / 101.0 - 1)
+    assert ranks == {"银行": 1.0}
+    assert simulator._slice_financials(None, current).empty
