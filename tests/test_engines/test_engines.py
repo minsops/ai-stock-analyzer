@@ -4,6 +4,7 @@ from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.engines import CapitalEngine, EventEngine, IndustryEngine, NewsEngine, TrendEngine, ValueEngine
 
@@ -27,15 +28,32 @@ def make_quotes(days: int = 160) -> pd.DataFrame:
     )
 
 
-def test_value_engine_scores_available_data() -> None:
-    engine = ValueEngine()
-    history = pd.DataFrame({"pe_ttm": [8, 10, 12, 20], "pb": [0.8, 1.0, 1.2, 2.0]})
-    data = {
-        "financial": {"pe_ttm": 10, "pb": 1.0, "roe": 15, "revenue_yoy": 20, "profit_yoy": 25, "dividend_yield": 3},
-        "financial_history": history,
+@pytest.fixture
+def quotes_fixture() -> pd.DataFrame:
+    return make_quotes()
+
+
+@pytest.fixture
+def financial_context_fixture() -> dict:
+    return {
+        "financial": {
+            "pe_ttm": 10,
+            "pb": 1.0,
+            "roe": 15,
+            "revenue_yoy": 20,
+            "profit_yoy": 25,
+            "dividend_yield": 3,
+        },
+        "financial_history": pd.DataFrame(
+            {"pe_ttm": [8, 10, 12, 20], "pb": [0.8, 1.0, 1.2, 2.0]}
+        ),
     }
 
-    result = engine.score("000001", data)
+
+def test_value_engine_scores_available_data(financial_context_fixture: dict) -> None:
+    engine = ValueEngine()
+
+    result = engine.score("000001", financial_context_fixture)
 
     assert result.available
     assert 0 <= result.score <= 100
@@ -73,8 +91,8 @@ def test_value_engine_clips_extreme_metrics_to_score_boundaries() -> None:
     assert result.details["profit_yoy"] == -100
 
 
-def test_trend_engine_scores_quotes() -> None:
-    result = TrendEngine().score("000001", {"quotes": make_quotes()})
+def test_trend_engine_scores_quotes(quotes_fixture: pd.DataFrame) -> None:
+    result = TrendEngine().score("000001", {"quotes": quotes_fixture})
 
     assert result.available
     assert 0 <= result.score <= 100
