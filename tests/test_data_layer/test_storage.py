@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import warnings
 
 import pandas as pd
 
@@ -192,3 +193,12 @@ def test_storage_ignores_rows_with_missing_primary_key() -> None:
 
     assert count == 1
     assert storage.get_quotes("000001").iloc[0]["trade_date"] == date(2025, 7, 1)
+
+
+def test_get_recent_news_uses_warning_free_date_arithmetic() -> None:
+    storage = DataStorage("sqlite:///:memory:")
+    storage.init_db()
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        assert storage.get_recent_news("000001") == []

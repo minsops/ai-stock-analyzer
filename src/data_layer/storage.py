@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 import json
 from typing import Any
 
@@ -249,7 +249,7 @@ class DataStorage:
 
     def get_recent_news(self, code: str, days: int = 30, limit: int = 30) -> list[dict[str, Any]]:
         """读取个股最近公告/新闻(按日期倒序)。news 表不存在时返回空，不影响其余链路。"""
-        cutoff = (datetime.now(UTC).date() - pd.Timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(UTC).date() - timedelta(days=days)).isoformat()
         stmt = (
             select(NewsItem.code, NewsItem.pub_date, NewsItem.title, NewsItem.source)
             .where(NewsItem.code == code, NewsItem.pub_date >= pd.to_datetime(cutoff).date())
