@@ -47,6 +47,49 @@ def test_regime_detector_detects_bull() -> None:
     assert "ma20" in details
 
 
+def test_regime_detector_degrades_when_market_data_is_missing() -> None:
+    assert RegimeDetector().detect({}) == ("shock", 0.3, {"reason": "市场数据不足，默认震荡"})
+    short = {"hs300": [{"close": value} for value in range(59)]}
+    regime, confidence, details = RegimeDetector().detect(short)
+    assert regime == "shock"
+    assert confidence == 0.4
+    assert "不足 60 日" in details["reason"]
+
+
+def test_regime_detector_detects_extreme_fear() -> None:
+    close = np.linspace(3000, 3600, 79).tolist() + [3400]
+    market = {"hs300": [{"close": value} for value in close], "advancers": 500, "decliners": 3500}
+
+    regime, confidence, _ = RegimeDetector().detect(market)
+
+    assert regime == "extreme_fear"
+    assert confidence == 0.85
+
+
+def test_regime_detector_detects_extreme_greed() -> None:
+    close = np.linspace(3000, 3500, 79).tolist() + [3650]
+    market = {"hs300": [{"close": value} for value in close], "advancers": 3800, "decliners": 800}
+
+    regime, confidence, _ = RegimeDetector().detect(market)
+
+    assert regime == "extreme_greed"
+    assert confidence == 0.8
+
+
+def test_regime_detector_detects_bear_and_shock() -> None:
+    falling = np.linspace(3600, 3000, 80)
+    bear, _, _ = RegimeDetector().detect(
+        {"hs300": [{"close": value} for value in falling], "advancers": 1000, "decliners": 3000}
+    )
+    shock, confidence, _ = RegimeDetector().detect(
+        {"hs300": [{"close": value} for value in falling], "advancers": 3000, "decliners": 1000}
+    )
+
+    assert bear == "bear"
+    assert shock == "shock"
+    assert confidence == 0.65
+
+
 def test_weight_manager_ignores_unavailable_scores() -> None:
     scores = {
         "value": ScoreResult(80, 1.0),
@@ -215,3 +258,137 @@ def test_scan_all_reuses_single_market_detection_and_saves_scores() -> None:
     assert len(result) == 2
     assert set(top_scores["name"]) == {"平安银行", "万科A"}
     assert storage.get_latest_market_regime()["regime"] == "bull"
+
+
+def test_ranker_builds_industry_context_with_return_and_volume_ranks() -> None:
+    storage = DataStorage("sqlite:///:memory:")
+    storage.init_db()
+    start = date(2025, 1, 1)
+    frames = []
+    for industry_code, industry_name, end_value, volume_end in (
+        ("BK001", "银行", 130.0, 2000.0),
+        ("BK002", "工业", 110.0, 1200.0),
+    ):
+        frames.append(
+            pd.DataFrame(
+                {
+                    "industry_code": [industry_code] * 21,
+                    "industry_name": [industry_name] * 21,
+                    "trade_date": [start + timedelta(days=i) for i in range(21)],
+                    "close": np.linspace(100.0, end_value, 21),
+                    "volume": np.linspace(1000.0, volume_end, 21),
+                }
+            )
+        )
+    storage.upsert_industry_index(pd.concat(frames, ignore_index=True))
+    ranker = StockRanker(
+        fetcher=FakeFetcher(),  # type: ignore[arg-type]
+        storage=storage,
+        engines=[],
+        regime_detector=RegimeDetector(),
+        weight_manager=WeightManager(),
+        conflict_resolver=ConflictResolver(),
+        stock_filter=StockFilter(),
+    )
+
+    context = ranker._build_industry_context({"industry_l1": "银行"}, pd.DataFrame())
+
+    assert np.isclose(context["return_20d"], 0.3)
+    assert context["rank_percentile"] == 0.5
+    assert context["fund_flow_percentile"] == 0.5
+    assert ranker._build_industry_context({"industry_l1": None}, pd.DataFrame()) == {}
+    assert ranker._build_industry_context({"industry_l1": "公用事业"}, pd.DataFrame()) == {}
+
+
+def test_ranker_applies_configured_factor_tilt(monkeypatch) -> None:
+    from config import settings
+
+    storage = DataStorage("sqlite:///:memory:")
+    ranker = StockRanker(
+        fetcher=FakeFetcher(),  # type: ignore[arg-type]
+        storage=storage,
+        engines=[],
+        regime_detector=RegimeDetector(),
+        weight_manager=WeightManager(),
+        conflict_resolver=ConflictResolver(),
+        stock_filter=StockFilter(),
+    )
+    codes = [f"{index:06d}" for index in range(15)]
+    frame = pd.DataFrame(
+        {"code": codes, "industry": ["银行"] * 15, "composite_score": [50.0] * 15}
+    )
+
+    def fake_quotes(code: str, *args, **kwargs) -> pd.DataFrame:
+        index = int(code)
+        return pd.DataFrame(
+            {
+                "trade_date": pd.date_range("2025-01-01", periods=61),
+                "close": np.linspace(10.0, 10.0 + index, 61),
+                "amount": [10_000_000.0 + index * 100_000] * 61,
+                "turnover": [1.0 + index / 100] * 61,
+            }
+        )
+
+    def fake_financials(code: str) -> pd.DataFrame:
+        index = int(code)
+        return pd.DataFrame(
+            {
+                "report_date": [date(2025, 3, 31)],
+                "pe_ttm": [5.0 + index],
+                "roe": [30.0 - index],
+                "profit_yoy": [40.0 - index],
+            }
+        )
+
+    monkeypatch.setattr(settings, "FACTOR_TILT_STRENGTH", 4.0)
+    monkeypatch.setattr(storage, "get_quotes", fake_quotes)
+    monkeypatch.setattr(storage, "get_financial_history", fake_financials)
+
+    tilted = ranker._apply_factor_tilt(frame)
+
+    assert not tilted["composite_score"].equals(frame["composite_score"])
+    assert tilted.loc[tilted["code"] == "000000", "composite_score"].iloc[0] > 50.0
+
+
+def test_scan_all_skips_single_stock_failure(monkeypatch) -> None:
+    storage = DataStorage("sqlite:///:memory:")
+    storage.init_db()
+    storage.upsert_stocks(
+        pd.DataFrame(
+            {
+                "code": ["000001", "000002"],
+                "name": ["股票A", "股票B"],
+                "market": ["SZ", "SZ"],
+                "is_active": [True, True],
+            }
+        )
+    )
+    ranker = StockRanker(
+        fetcher=FakeFetcher(),  # type: ignore[arg-type]
+        storage=storage,
+        engines=[],
+        regime_detector=RegimeDetector(),
+        weight_manager=WeightManager(),
+        conflict_resolver=ConflictResolver(),
+        stock_filter=StockFilter(),
+    )
+
+    def fake_score(code: str, **kwargs) -> dict:
+        if code == "000001":
+            raise RuntimeError("bad stock")
+        return {
+            "code": code,
+            "name": "股票B",
+            "industry": None,
+            "composite_score": 70.0,
+            "engine_scores": {},
+            "regime": "bull",
+            "weights": {},
+            "filter_passed": True,
+            "quarantined": False,
+        }
+
+    monkeypatch.setattr(ranker, "score_single", fake_score)
+    result = ranker.scan_all(top_n=5)
+
+    assert result["code"].tolist() == ["000002"]

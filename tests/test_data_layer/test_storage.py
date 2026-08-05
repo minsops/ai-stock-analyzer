@@ -85,3 +85,110 @@ def test_upsert_fundamentals_preserves_valuation_rows() -> None:
     assert hist.loc[date(2024, 8, 30), "roe"] == 18.0
     assert pd.isna(hist.loc[date(2024, 8, 30), "pe_ttm"])
 
+
+def test_storage_round_trips_financial_capital_and_industry_data() -> None:
+    storage = DataStorage("sqlite:///:memory:")
+    storage.init_db()
+    storage.upsert_financial_data(
+        pd.DataFrame(
+            {
+                "code": ["000001", "000001"],
+                "report_date": [date(2025, 3, 31), date(2025, 6, 30)],
+                "pe_ttm": [10.0, 11.0],
+                "roe": [12.0, 13.0],
+            }
+        )
+    )
+    storage.upsert_capital_flow(
+        pd.DataFrame(
+            {
+                "code": ["000001"],
+                "trade_date": [date(2025, 7, 1)],
+                "main_net_inflow": [1_000_000.0],
+            }
+        )
+    )
+    storage.upsert_industry_index(
+        pd.DataFrame(
+            {
+                "industry_code": ["BK001"],
+                "industry_name": ["银行"],
+                "trade_date": [date(2025, 7, 1)],
+                "close": [1200.0],
+            }
+        )
+    )
+
+    assert storage.get_latest_financial("000001")["report_date"] == date(2025, 6, 30)
+    assert storage.get_latest_financial("missing") == {}
+    assert storage.get_capital_flow("000001").iloc[0]["main_net_inflow"] == 1_000_000.0
+    assert storage.get_industry_history("银行").iloc[0]["close"] == 1200.0
+    assert len(storage.get_all_industry_history()) == 1
+
+
+def test_storage_saves_scores_and_falls_back_to_latest_score_date() -> None:
+    storage = DataStorage("sqlite:///:memory:")
+    storage.init_db()
+    storage.upsert_stocks(
+        pd.DataFrame(
+            {
+                "code": ["000001", "000002"],
+                "name": ["股票A", "股票B"],
+                "market": ["SZ", "SZ"],
+                "is_active": [True, False],
+            }
+        )
+    )
+    score_date = date(2025, 7, 1)
+    count = storage.save_scores(
+        pd.DataFrame(
+            {
+                "code": ["000001"],
+                "score_date": [score_date],
+                "composite_score": [88.0],
+                "regime": ["bull"],
+                "weights": [{"value": 0.4, "trend": 0.6}],
+            }
+        )
+    )
+
+    top = storage.get_top_scores("2025-07-02", top_n=5)
+
+    assert count == 1
+    assert top.iloc[0]["score_date"] == score_date
+    assert top.iloc[0]["name"] == "股票A"
+    assert '"value": 0.4' in top.iloc[0]["weights_json"]
+    assert storage.get_latest_score("000001")["composite_score"] == 88.0
+    assert storage.get_latest_score("missing") == {}
+    assert storage.get_all_active_codes() == ["000001"]
+    assert storage.get_active_stocks()["code"].tolist() == ["000001"]
+
+
+def test_storage_saves_latest_market_regime() -> None:
+    storage = DataStorage("sqlite:///:memory:")
+    storage.init_db()
+
+    assert storage.get_latest_market_regime() == {}
+    assert storage.save_market_regime(date(2025, 7, 1), "bear", 0.75, {"breadth": 0.3}) == 1
+
+    latest = storage.get_latest_market_regime()
+    assert latest["regime"] == "bear"
+    assert '"breadth": 0.3' in latest["details_json"]
+
+
+def test_storage_ignores_rows_with_missing_primary_key() -> None:
+    storage = DataStorage("sqlite:///:memory:")
+    storage.init_db()
+
+    count = storage.upsert_daily_quotes(
+        pd.DataFrame(
+            {
+                "code": ["000001", None],
+                "trade_date": [pd.Timestamp("2025-07-01"), pd.Timestamp("2025-07-01")],
+                "close": [10.0, 20.0],
+            }
+        )
+    )
+
+    assert count == 1
+    assert storage.get_quotes("000001").iloc[0]["trade_date"] == date(2025, 7, 1)
