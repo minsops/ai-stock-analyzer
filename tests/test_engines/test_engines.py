@@ -50,12 +50,51 @@ def test_value_engine_marks_sparse_data_unavailable() -> None:
     assert result.confidence < 0.3
 
 
+def test_value_engine_clips_extreme_metrics_to_score_boundaries() -> None:
+    history = pd.DataFrame({"pe_ttm": [5, 10, 20], "pb": [0.5, 1.0, 2.0]})
+    result = ValueEngine().score(
+        "000001",
+        {
+            "financial": {
+                "pe_ttm": 5,
+                "pb": 0.5,
+                "roe": 100,
+                "revenue_yoy": 200,
+                "profit_yoy": -100,
+                "dividend_yield": 20,
+            },
+            "financial_history": history,
+        },
+    )
+
+    assert result.available
+    assert result.confidence == 1.0
+    assert 0 <= result.score <= 100
+    assert result.details["profit_yoy"] == -100
+
+
 def test_trend_engine_scores_quotes() -> None:
     result = TrendEngine().score("000001", {"quotes": make_quotes()})
 
     assert result.available
     assert 0 <= result.score <= 100
     assert result.confidence >= 0.8
+
+
+def test_trend_engine_handles_short_boundary_series() -> None:
+    result = TrendEngine().score("000001", {"quotes": make_quotes(14)})
+
+    assert result.available
+    assert result.confidence == 0.3333
+    assert 0 <= result.score <= 100
+
+
+def test_trend_engine_is_unavailable_without_quotes() -> None:
+    result = TrendEngine().score("000001", {"quotes": pd.DataFrame()})
+
+    assert not result.available
+    assert result.confidence == 0.0
+    assert "数据不足" in result.signals[0]
 
 
 def test_capital_engine_handles_missing_northbound_neutrally() -> None:
@@ -75,6 +114,22 @@ def test_capital_engine_handles_missing_northbound_neutrally() -> None:
     assert result.confidence == 1
 
 
+def test_capital_engine_uses_volume_price_proxy_at_minimum_history() -> None:
+    result = CapitalEngine().score("000001", {"capital": pd.DataFrame(), "quotes": make_quotes(20)})
+
+    assert result.available
+    assert result.confidence >= 0.75
+    assert "量价代理" in result.signals[0]
+
+
+def test_capital_engine_is_unavailable_without_capital_or_quotes() -> None:
+    result = CapitalEngine().score("000001", {})
+
+    assert not result.available
+    assert result.score == 0.0
+    assert "数据不足" in result.signals[0]
+
+
 def test_industry_engine_scores_supplied_industry_context() -> None:
     result = IndustryEngine().score(
         "000001",
@@ -86,6 +141,27 @@ def test_industry_engine_scores_supplied_industry_context() -> None:
 
     assert result.available
     assert 0 <= result.score <= 100
+
+
+def test_industry_engine_clips_best_rank_boundary() -> None:
+    result = IndustryEngine().score(
+        "000001",
+        {
+            "quotes": pd.DataFrame(),
+            "industry": {"rank_percentile": 0.0, "fund_flow_percentile": 0.0},
+        },
+    )
+
+    assert result.available
+    assert result.score == 100.0
+    assert result.confidence == 0.6667
+
+
+def test_industry_engine_is_unavailable_without_context() -> None:
+    result = IndustryEngine().score("000001", {})
+
+    assert not result.available
+    assert result.confidence == 0.0
 
 
 def test_news_engine_scores_positive_and_negative() -> None:
@@ -115,3 +191,22 @@ def test_event_engine_scores_limit_and_volatility() -> None:
 
     assert result.available
     assert result.details["limit_up_5d"] is True
+
+
+def test_event_engine_scores_limit_down_boundary_with_short_history() -> None:
+    quotes = make_quotes(2)
+    quotes["pct_change"] = [0.0, -10.0]
+
+    result = EventEngine().score("000001", {"quotes": quotes})
+
+    assert result.available
+    assert result.score == 20.0
+    assert result.confidence == 0.5
+    assert result.details["limit_down_5d"] is True
+
+
+def test_event_engine_is_unavailable_without_quotes() -> None:
+    result = EventEngine().score("000001", {})
+
+    assert not result.available
+    assert result.score == 0.0
