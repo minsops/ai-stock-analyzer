@@ -78,6 +78,34 @@ class StockDataFetcher:
             end_date=end_date,
             adjust="qfq",
         )
+        if df.empty:
+            if normalized_code.startswith("6"):
+                market = "sh"
+            elif normalized_code.startswith(("4", "8")):
+                market = "bj"
+            else:
+                market = "sz"
+            df = self._safe_call(
+                f"获取腾讯日线数据 {normalized_code}",
+                "stock_zh_a_hist_tx",
+                symbol=f"{market}{normalized_code}",
+                start_date=start_date,
+                end_date=end_date,
+                adjust="qfq",
+                timeout=settings.FETCH_TIMEOUT_SECONDS,
+            )
+            if not df.empty:
+                # 腾讯日线接口的 amount 列实际为成交量，不提供成交额。
+                df = df.rename(
+                    columns={
+                        "date": "日期",
+                        "open": "开盘",
+                        "close": "收盘",
+                        "high": "最高",
+                        "low": "最低",
+                        "amount": "成交量",
+                    }
+                )
         cleaned = self.cleaner.clean_quotes(df)
         if not cleaned.empty:
             cleaned["code"] = normalized_code

@@ -63,6 +63,50 @@ def test_fetcher_does_not_cache_empty_quote_response(tmp_path, monkeypatch) -> N
     assert not cache.is_fresh("daily_quotes:000001:20260101:20260102:qfq")
 
 
+def test_fetcher_daily_quotes_falls_back_to_tencent_source(tmp_path, monkeypatch) -> None:
+    from config import settings
+
+    class FakeAk:
+        tx_kwargs: dict | None = None
+
+        def stock_zh_a_hist(self, **kwargs) -> pd.DataFrame:
+            raise ConnectionError("eastmoney disconnected")
+
+        def stock_zh_a_hist_tx(self, **kwargs) -> pd.DataFrame:
+            self.tx_kwargs = kwargs
+            return pd.DataFrame(
+                {
+                    "date": ["2026-01-02"],
+                    "open": [10.0],
+                    "close": [10.3],
+                    "high": [10.5],
+                    "low": [9.9],
+                    "amount": [123_456],
+                }
+            )
+
+    _disable_fetch_waits(monkeypatch)
+    monkeypatch.setattr(settings, "FETCH_RETRY_TIMES", 1)
+    cache = DataCache(tmp_path)
+    fetcher = StockDataFetcher(cache=cache, cleaner=DataCleaner())
+    fetcher._ak = FakeAk()
+
+    result = fetcher.get_daily_quotes("SZ000001", "20260101", "20260103")
+
+    assert result.iloc[0]["code"] == "000001"
+    assert result.iloc[0]["trade_date"].isoformat() == "2026-01-02"
+    assert result.iloc[0]["close"] == 10.3
+    assert result.iloc[0]["volume"] == 123_456
+    assert pd.isna(result.iloc[0]["amount"])
+    assert fetcher._ak.tx_kwargs == {
+        "symbol": "sz000001",
+        "start_date": "20260101",
+        "end_date": "20260103",
+        "adjust": "qfq",
+        "timeout": settings.FETCH_TIMEOUT_SECONDS,
+    }
+
+
 def test_fetcher_safe_call_retries_then_returns_data(tmp_path, monkeypatch) -> None:
     from config import settings
 
