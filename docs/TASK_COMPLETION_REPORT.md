@@ -65,7 +65,7 @@
 
 - 仓库：`https://github.com/minsops/ai-stock-analyzer.git`
 - 功能分支：`feature/route-a-productization-and-factor-research`
-- 本轮完成后会把功能分支推送到同名 GitHub 远端分支，并以最终 push 结果作为同步凭据。
+- 功能分支已推送到同名 GitHub 远端分支；最终同步状态以该分支远端 `HEAD` 为准。
 - 许可证：仓库已包含 `LICENSE`
 - 敏感信息：DeepSeek Key 仅应放在 `.env`，`.env` 被 Git 忽略；提交前敏感信息扫描未发现已跟踪密钥。
 
