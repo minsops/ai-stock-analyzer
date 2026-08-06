@@ -8,7 +8,7 @@ from typing import Any
 
 import pandas as pd
 from loguru import logger
-from sqlalchemy import Boolean, Date, DateTime, Float, Integer, String, Text, create_engine, select
+from sqlalchemy import Boolean, Date, DateTime, Float, Index, Integer, String, Text, create_engine, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
@@ -103,6 +103,7 @@ class Score(Base):
     composite_score: Mapped[float | None] = mapped_column(Float, index=True)
     regime: Mapped[str | None] = mapped_column(String)
     weights_json: Mapped[str | None] = mapped_column(Text)
+    __table_args__ = (Index("idx_scores_date_composite", score_date, composite_score.desc()),)
 
 
 class NewsItem(Base):
@@ -151,23 +152,7 @@ class DataStorage:
     def init_db(self) -> None:
         """创建所有数据库表。"""
         Base.metadata.create_all(self.engine)
-        # 轻量迁移:为已存在的 watchlist 表补后加的列(create_all 不会 ALTER 旧表)。
-        self._ensure_columns("watchlist", {"group_name": "VARCHAR DEFAULT '默认'", "alert_above": "FLOAT", "alert_below": "FLOAT"})
         logger.info("数据库表初始化完成")
-
-    def _ensure_columns(self, table: str, columns: dict[str, str]) -> None:
-        """SQLite 下为已存在的表补缺失列(简易迁移)。其他方言交给用户的迁移工具。"""
-        if self.engine.dialect.name != "sqlite":
-            return
-        from sqlalchemy import text
-
-        with self.engine.begin() as connection:
-            existing = {row[1] for row in connection.execute(text(f"PRAGMA table_info({table})"))}
-            if not existing:  # 表还不存在(create_all 已建则不会到这);跳过
-                return
-            for name, ddl in columns.items():
-                if name not in existing:
-                    connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
 
     def upsert_stocks(self, df: pd.DataFrame) -> int:
         return self._upsert_dataframe(df, Stock, ["code"])
@@ -289,6 +274,12 @@ class DataStorage:
         """获取所有正常交易股票代码。"""
         with self.SessionLocal() as session:
             rows = session.execute(select(Stock.code).where(Stock.is_active.is_(True))).scalars().all()
+            return list(rows)
+
+    def get_codes_with_quotes(self) -> list[str]:
+        """获取已有行情的股票代码，去重后按代码排序。"""
+        with self.SessionLocal() as session:
+            rows = session.execute(select(DailyQuote.code).distinct().order_by(DailyQuote.code)).scalars().all()
             return list(rows)
 
     def get_active_stocks(self) -> pd.DataFrame:

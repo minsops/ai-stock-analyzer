@@ -39,7 +39,7 @@ def _fetch_chunk(codes: list[str]) -> pd.DataFrame:
 def main() -> None:
     workers = int(sys.argv[1]) if len(sys.argv) > 1 else 6
     storage = DataStorage()
-    codes = pd.read_sql("SELECT DISTINCT code FROM daily_quotes", storage.engine)["code"].tolist()
+    codes = storage.get_codes_with_quotes()
     if not codes:
         print("daily_quotes 为空，请先拉取行情")
         return

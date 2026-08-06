@@ -6,6 +6,9 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
+from alembic import command
+from alembic.config import Config
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -13,17 +16,21 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from config.logging_config import setup_logging  # noqa: E402
 from config import settings  # noqa: E402
-from src.data_layer.storage import DataStorage  # noqa: E402
+
+
+def upgrade_database(db_url: str | None = None) -> None:
+    config = Config(str(PROJECT_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(PROJECT_ROOT / "migrations"))
+    config.set_main_option("sqlalchemy.url", db_url or settings.DATABASE_URL)
+    command.upgrade(config, "head")
 
 
 def main() -> None:
     setup_logging()
     settings.ensure_directories()
-    storage = DataStorage()
-    storage.init_db()
+    upgrade_database()
     print(f"数据库初始化完成: {settings.DATABASE_URL}")
 
 
 if __name__ == "__main__":
     main()
-

@@ -34,6 +34,22 @@ def test_storage_upserts_and_reads_quotes() -> None:
     assert loaded.iloc[-1]["close"] == 10.2
 
 
+def test_storage_lists_distinct_quote_codes_in_order() -> None:
+    storage = DataStorage("sqlite:///:memory:")
+    storage.init_db()
+    storage.upsert_daily_quotes(
+        pd.DataFrame(
+            {
+                "code": ["600000", "000001", "600000"],
+                "trade_date": [date(2026, 1, 1), date(2026, 1, 1), date(2026, 1, 2)],
+                "close": [10.0, 11.0, 12.0],
+            }
+        )
+    )
+
+    assert storage.get_codes_with_quotes() == ["000001", "600000"]
+
+
 def test_storage_skips_empty_dataframe() -> None:
     storage = DataStorage("sqlite:///:memory:")
     storage.init_db()

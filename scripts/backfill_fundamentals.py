@@ -34,7 +34,7 @@ def main() -> None:
     years = int(sys.argv[1]) if len(sys.argv) > 1 else 4
     limit = int(sys.argv[2]) if len(sys.argv) > 2 else None
     storage = DataStorage()
-    codes = pd.read_sql("SELECT DISTINCT code FROM daily_quotes", storage.engine)["code"].tolist()
+    codes = storage.get_codes_with_quotes()
     if not codes:
         print("daily_quotes 为空，请先拉取行情")
         return
