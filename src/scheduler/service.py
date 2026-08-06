@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 import schedule
 from loguru import logger
@@ -30,7 +30,7 @@ class SchedulerService:
         updater: DataUpdater,
         ranker: StockRanker,
         notifier: NotificationService | None = None,
-        schedule_module=schedule,
+        schedule_module: Any = schedule,
         news_fn: Callable[[], dict | str] | None = None,
         capital_fn: Callable[[], dict | str] | None = None,
     ) -> None:
@@ -118,4 +118,3 @@ class SchedulerService:
         except Exception as exc:  # noqa: BLE001
             self.notifier.send("每日资金面更新失败", str(exc), level="error")
             return ScheduledJobResult("daily_capital", False, str(exc))
-

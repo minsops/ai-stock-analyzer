@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 import threading
+from typing import Any
 
 import pandas as pd
 from loguru import logger
@@ -34,7 +35,7 @@ class BaostockFetcher:
         self.fetch_fundamentals = fetch_fundamentals
 
     @property
-    def bs(self):
+    def bs(self) -> Any:
         if self._bs is None:
             import baostock as bs
 

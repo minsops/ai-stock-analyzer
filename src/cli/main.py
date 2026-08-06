@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from pathlib import Path
 import sys
+from typing import TYPE_CHECKING
 
 import click
 import pandas as pd
@@ -25,8 +26,11 @@ from src.valuation import HistoricalValuation
 
 console = Console()
 
+if TYPE_CHECKING:
+    from src.data_layer.baostock_source import BaostockFetcher
 
-def make_fetcher(source: str = "akshare"):
+
+def make_fetcher(source: str = "akshare") -> StockDataFetcher | BaostockFetcher:
     """按数据源返回拉取器。baostock 作为网络受限时的免费备用源。"""
     if source == "baostock":
         from src.data_layer.baostock_source import BaostockFetcher
@@ -460,7 +464,6 @@ def render_trade_plan(plan: dict | None) -> None:
     )
     if plan.get("target_value") is not None:
         console.print(f"  价值目标(PE回归中位): {plan['target_value']} ({plan['upside_value_pct']:+}%)")
-    console.print("[dim]价格建议基于技术/估值测算，仅供研究参考，不构成投资建议。[/dim]")
 
 
 def render_industry_chain(chain: dict) -> None:
@@ -501,7 +504,6 @@ def render_ai_analysis(analysis: dict) -> None:
             console.print(f"[bold]{title}:[/bold] " + "；".join(str(item) for item in items))
     if analysis.get("suggested_action"):
         console.print(f"[bold]操作建议:[/bold] {analysis['suggested_action']}")
-    console.print("[dim]AI 分析仅供研究参考，不构成投资建议。[/dim]")
 
 
 if __name__ == "__main__":
