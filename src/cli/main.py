@@ -484,7 +484,7 @@ def render_industry_chain(chain: dict) -> None:
             if isinstance(item, dict):
                 code = f"({item.get('code')})" if item.get("code") else ""
                 console.print(f"    - {item.get('name', '')}{code} [{item.get('role', '')}] {item.get('reason', '')}")
-    console.print("[dim]产业链分析由 AI 生成，仅供研究参考，可能存在偏差。[/dim]")
+    console.print("[dim]产业链分析由 AI 生成，可能存在偏差。[/dim]")
 
 
 def render_ai_analysis(analysis: dict) -> None:

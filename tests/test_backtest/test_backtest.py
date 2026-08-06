@@ -139,7 +139,7 @@ def test_backtest_helpers_use_point_in_time_membership_and_weekly_rebalance() ->
 
 def test_backtest_exposure_series_covers_market_regimes() -> None:
     simulator = BacktestSimulator(DataStorage("sqlite:///:memory:"))
-    tiers = {"bull": 1.0, "bear": 0.4, "shock": 0.8, "extreme_fear": 0.1}
+    tiers = {"bull": 0.8, "bear": 0.4, "shock": 0.6, "extreme_fear": 0.2}
     index = pd.date_range("2025-01-01", periods=70, freq="D")
 
     rising = pd.DataFrame({"000001": np.linspace(100.0, 140.0, 70)}, index=index)
@@ -151,10 +151,10 @@ def test_backtest_exposure_series_covers_market_regimes() -> None:
     falling_exposure = simulator._exposure_series(falling, tiers)
     panic_exposure = simulator._exposure_series(panic, tiers)
 
-    assert rising_exposure[index[0].date()] == 0.8
-    assert rising_exposure[index[-1].date()] == 1.0
+    assert rising_exposure[index[0].date()] == 0.6
+    assert rising_exposure[index[-1].date()] == 0.8
     assert falling_exposure[index[-1].date()] == 0.4
-    assert panic_exposure[index[-1].date()] == 0.1
+    assert panic_exposure[index[-1].date()] == 0.2
 
 
 def test_backtest_composite_scores_fall_back_to_momentum_without_quotes() -> None:

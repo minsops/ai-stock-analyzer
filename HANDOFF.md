@@ -35,7 +35,7 @@ python scripts/fetch_backtest_history.py 3 6            # 3年+历史成分股(�
 ## 2. 架构
 - `src/data_layer/`：`fetcher.py`(akshare/东财，按接口名解析、缺失降级)、`baostock_source.py`(baostock 主源：行情/财务/中证·沪深300行业指数/估值/指数成分)、`news_source.py`(东财公告 httpx)、`cleaner.py`、`storage.py`(SQLAlchemy/SQLite，含分块写入修复)、`updater.py`(并发拉取，--source/--index/--years/--sample/--codes)。
 - `src/engines/`：6 引擎 `value/trend/capital/industry/event/news`，基类 `BaseEngine`，缺数据降权不填50。capital 无真实资金时走"量价代理(量比/OBV/CMF/换手)"。news 规则版(公告标题利好利空)。
-- `src/fusion/`：`regime_detector`、`weight_manager`(各状态权重，含 news 维)、`conflict_resolver`(分歧→降置信度而非取最小)、`filter`(金融业豁免负债率)、`ranker`(综合评分，输出 trade_plan/recent_news/available_engines)。
+- `src/fusion/`：`regime_detector`、`weight_manager`(各状态权重，含 news 维)、`conflict_resolver`(极端分歧隔离；中等分歧按状态优先引擎或较低分处理)、`filter`(金融业豁免负债率)、`ranker`(综合评分，输出 trade_plan/recent_news/available_engines)。
 - `src/industry/`：`ranker.py`(行业热度按成分股涨幅中位数；行业内取头部)、`sector_map.py`(证监会→中证/沪深300 一级行业映射)。
 - `src/risk/`：`position_sizer`、`risk_manager`、`trade_plan.py`(买入区间/止损/技术目标/价值目标(PE回归中位))。
 - `src/llm/`：`client.py`(DeepSeek OpenAI兼容)、`analyst.py`(评分→AI研判 JSON；产业链分析；吃近期公告标题)。
@@ -58,7 +58,7 @@ python scripts/fetch_backtest_history.py 3 6            # 3年+历史成分股(�
 3. **出场规则对照**(同一批每日选股)：hold60 单笔 +1.91% > hold20 +0.76% > 止盈止损 ≈0。说明"持有久/低换手"远好于"止盈止损"——但这只是把 beta 拿得更久，不是 alpha。
 4. **逐引擎 IC**：value +0.008 / trend -0.003 / capital -0.004 / industry -0.019，**全部 |IC|<0.02**(event/news 回测期无历史数据)。没有单个引擎有真信号。
 5. **经典因子 IC**（直接从行情）：rev20 +0.016 / lowvol +0.025 / lottery +0.029 / lowturn +0.008…**全部 |IC|≤0.029(<0.03 阈值)，且 IC 与多空价差符号矛盾**→ 这段 A 股(投机/高波小盘尾部跑赢)连经典因子都没稳健信号。
-6. **择时**：按市场状态降仓(`--timing`，进取档 bull1.0/shock0.8/bear0.4/极恐0.1)能把3年回撤 -19%→-15%、夏普 1.11→1.28、熊市转平，但牛市少赚——风险管理有效，但不创造选股 alpha。
+6. **择时**：当前确认档位为 bull0.8/shock0.6/bear0.4/极恐0.2/极贪0.5。仓位管理用于限制风险暴露，不创造选股 alpha；历史结果需按当前档位重新复核。
 
 **总结论：当前系统没有可靠的截面选股 alpha。** 真实价值 = 透明可解释评分 + AI 研报 + 行业/产业链 + 仪表盘，适合做**研究/筛选/监控**辅助，不适合直接当自动赚钱策略。
 
@@ -77,7 +77,7 @@ python scripts/fetch_backtest_history.py 3 6            # 3年+历史成分股(�
 - 跑长任务用后台(nohup) + 轮询日志；不占额度，在用户机器持续跑。
 
 ## 7. 测试
-`.venv/bin/python -m pytest -q -o addopts="" -p no:cacheprovider tests` → **66 passed**。
+完整测试数量和覆盖率以 `docs/TASK_COMPLETION_REPORT.md` 的最新验收记录为准。
 (运行需在项目根；`ai-stock` 命令需先 `pip install .`。)
 
 ## 8. 建议下一步（两条路，给新会话决策）
@@ -92,9 +92,9 @@ python scripts/fetch_backtest_history.py 3 6            # 3年+历史成分股(�
 
 ## 9. 决策与进度（2026-06-16 之后）
 - **用户已定方向：先 A 后 B** —— 先把工具部署上线产生实用价值，再把因子 IC 研究当并行长期探索。
-- **[A-1 已完成] 仪表盘接口健壮性**：`/regime` 与 `/ranking` 原先在每次请求都做阻塞式 `get_fetcher().get_market_overview()` 实时行情拉取（沙箱里直接挂起、服务器上是延迟/限流隐患）。改为新增 `src/api/dependencies.py::get_current_regime()`：优先读每日 `scan` 已落库的最近一次 `market_regime`（`get_latest_market_regime`），库空时才回退实时探测。两接口现 ~0.03s 返回、纯 DB 驱动，数据源挂了仪表盘仍可用。`tests/test_api.py` 两个测试改 mock `get_current_regime`。
-  - 依赖：仪表盘新鲜度依赖每日跑 `scan`（它会刷新 scores + market_regime）。已由下方 A-4 调度器服务自动排上。
-- **[A-2 已完成] 诚实定位横幅**：仪表盘顶部加显眼黄底横幅（`src/api/routes/dashboard.py` `.banner`），明示「研究/筛选/监控工具」「当前评分无稳健截面 alpha(IC≈0)，评分高≠更会涨，历史高收益主要是 beta+幸存者偏差」「不预测涨跌、不构成投资建议」。底部小字改成数据新鲜度说明。
+- **[A-1 已完成] 仪表盘接口健壮性**：数据更新结束时获取一次市场概览并持久化 `market_regime`；`/regime`、`/ranking`、单股评分和扫描只读本地状态，空库直接按震荡降级，不再回退外部行情。
+  - 依赖：仪表盘新鲜度依赖每日运行数据更新；调度器已安排更新后扫描。
+- **[A-2 已完成] 诚实定位横幅**：仪表盘横幅展示研究/筛选/监控定位、IC、beta 与样本幸存者偏差等事实性质量信息。
 - **[A-3 已完成] 筛选实用功能：CSV 导出 + 自选**：
   - `GET /api/v1/ranking/export.csv?top_n=&date=&industry=`：带 BOM 的 UTF-8 CSV（Excel 直接开），列=排名/代码/名称/行业/综合/各引擎分。
   - 服务端持久化自选：新增 `watchlist` 表（`Watchlist` 模型）+ `storage.add_to_watchlist/remove_from_watchlist/get_watchlist/get_latest_score`；新路由 `src/api/routes/watchlist.py`（GET 列表带最近评分并按分排序 / POST 加 / DELETE 删），已挂到 `src/api/main.py`。仪表盘加「我的自选」卡片 + 排行/个股里 ★ 一键加自选。
@@ -103,11 +103,11 @@ python scripts/fetch_backtest_history.py 3 6            # 3年+历史成分股(�
   - `SchedulerService`（`src/scheduler/service.py`）扩展：新增可选 `news_fn`/`capital_fn`，`register_daily_jobs` 按需登记 资金/消息 刷新（扫描前），`run_daily_news/run_daily_capital`（未配置则 graceful skip）。
   - 新 CLI `ai-stock schedule`（`src/cli/main.py` `schedule_cmd`）：常驻循环每日 `update→[capital]→[news]→scan`；`--update-time/--scan-time/--top-n/--source/--with-news/--with-capital/--run-once` 等。`--run-once` 立即跑一遍退出。
   - `docker-compose.yml` 加 `scheduler` 服务（与 api 共享镜像+data 卷，`TZ=Asia/Shanghai`，`restart: unless-stopped`，`depends_on: api`）。README「部署到服务器」段重写：定时改由该服务自动完成，给出 `--run-once` 手动触发与 `--with-capital` 说明。
-  - 测试：`tests/test_scheduler` 加 4 个（默认登记 2 任务 / 配 news+capital 登记 4 / 未配置 skip / 配置后真调用）。**全量 73 测试通过**。
+  - 测试覆盖默认任务、可选 news/capital、跳过和失败分支；最新全量结果见完成报告。
   - 端到端：网络受限沙箱里 `update` 这步连东财会失败（正常，服务器/能连东财环境无此问题）；`schedule --help`、scan 落库→/ranking 读库已分别验证。
 
 - **[A-5/6/7 已完成] 自选增强 + 导出维度**：
-  - 自选表 `watchlist` 加 `group_name`/`alert_above`/`alert_below`（`storage._ensure_columns` 做了 SQLite 轻量 ALTER 迁移，旧表自动补列）。新 storage 方法 `get_watchlist_full`/`check_watchlist_alerts`，`add_to_watchlist` 支持分组+阈值。
+  - 自选表 `watchlist` 加 `group_name`/`alert_above`/`alert_below`；Alembic 基线迁移负责旧表补列。新 storage 方法 `get_watchlist_full`/`check_watchlist_alerts`，`add_to_watchlist` 支持分组+阈值。
   - 路由：`GET /watchlist` 返回 `groups`(按分组聚合)+每项 `alert_triggered`；新增 `GET /watchlist/alerts`(当前触发列表)。仪表盘自选卡片按分组展示、★/⚙(设分组+阈值)/✕、顶部 🔔 提醒条。
   - **提醒接入调度器**：`run_daily_scan` 扫描后调 `run_watchlist_alerts`(用最新评分比阈值，触发则 `NotificationService.send`)。
   - CSV 导出加 `市场状态`/`评分日` 列(共 12 列)，`industry_score` 表头改「行业评分」去重名。
@@ -124,7 +124,7 @@ python scripts/fetch_backtest_history.py 3 6            # 3年+历史成分股(�
   - 接入线上(保守可关):`src/fusion/factor_tilt.py::compute_factor_tilt`(截面 价值+质量+成长+反转 组合z,行业+市值中性化)+ `ranker.scan_all` 排序前给综合分加 `FACTOR_TILT_STRENGTH×clip(z,±3)`(`config/settings.py` 默认**4.0**温和,设0关,环境变量可调)。只改排序不动引擎分项。`tests/test_fusion/test_factor_tilt.py` 3测试。
   - ⚠️ 因子同样本选出有过拟合风险→默认保守,建议实盘/滚动样本外监控再决定加强度。**注意:本机沙箱 `scan` 会卡在 get_market_overview(东财网络),`_apply_factor_tilt` 已用真实库数据直测生效(baseline全60→倾斜后48~72,顶低PE/高ROE/反转、压高估值/追涨)。**
 
-**总状态：A 部署产品化全部完成 + B 因子全链路(框架→补历史财务→重测→回测验证→接入线上保守倾斜)。84 测试通过,改动已提交到 feature 分支。** A 可即部署;B 找到弱而稳的多因子组合(价值+质量+成长+反转,样本外IC~0.035)并已接入(默认温和倾斜、可关、可调)。
+**总状态：A 产品化能力和 B 因子研究链路已实现；严格一致修正、当前验证结果和剩余边界见 `docs/TASK_COMPLETION_REPORT.md`。**
 
 ## 10. 给新会话的接上提示
 "读 HANDOFF.md + memory/ai-stock-analyzer.md + 仓库。**用户已定先A后B,两边都做完一轮**:A产品化全做完(A-1~A-7:接口健壮/诚实横幅/CSV+自选/容器内调度器/自选提醒/分组/导出维度);B因子IC框架(`scripts/factor_research.py`+`docs/FACTOR_RESEARCH.md`)落地,**已补历史季度财务(`scripts/backfill_fundamentals.py`,回填18628行)并重测**。**B新结论**:回填后稳健集=earnings_yield(低PE)+roe+profit_yoy+mom60反转,IC加权组合样本外IC≈+0.035(弱而稳,非强alpha)。**81测试通过**。可落地方向=综合分向这组因子轻度倾斜+低换手/择时;再往下=补现金流/ROE趋势/真实主力北向(需连东财服务器)。注意:本机沙箱连不上东财且禁用多进程;改源码 `pip install .` 重装或 `python -m src.cli.main`。"

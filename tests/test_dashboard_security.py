@@ -46,4 +46,5 @@ def test_runtime_files_have_no_disclaimer_wording() -> None:
 
     for relative_path in runtime_files:
         content = (ROOT / relative_path).read_text(encoding="utf-8")
-        assert "不构成投资建议" not in content, relative_path
+        forbidden = "不构成" + "投资建议"
+        assert forbidden not in content, relative_path
