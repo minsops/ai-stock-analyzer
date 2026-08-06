@@ -12,14 +12,18 @@ class ConflictResolver:
 
     CONFLICT_THRESHOLD = 40
     QUARANTINE_THRESHOLD = 60
-    # 震荡/保守状态下，分歧引擎的置信度下调系数(降权而非取最小)。
-    CONFLICT_CONFIDENCE_PENALTY = 0.5
     PRIORITY_BY_REGIME = {
         "bull": "trend",
         "bear": "value",
-        "shock": "conservative",
+        "shock": None,
         "extreme_fear": "value",
         "extreme_greed": "capital",
+    }
+    PRIORITY_SIGNALS = {
+        "bull": "牛市冲突优先趋势分",
+        "bear": "熊市冲突优先价值分",
+        "extreme_fear": "极度恐慌时冲突优先价值分",
+        "extreme_greed": "极度贪婪时冲突优先资金分",
     }
 
     def check_conflicts(self, scores: dict[str, ScoreResult]) -> list[dict]:
@@ -49,33 +53,24 @@ class ConflictResolver:
         if any(item["gap"] > self.QUARANTINE_THRESHOLD for item in conflicts):
             return {"action": "quarantine", "adjusted_scores": scores, "reason": "引擎分歧超过隔离阈值", "conflicts": conflicts}
 
-        adjusted = {key: value for key, value in scores.items()}
-        priority = self.PRIORITY_BY_REGIME.get(regime, "conservative")
-        if priority == "conservative":
-            # 降权而非取最小：分歧引擎保留各自分数，但置信度下调，从而在综合分里自动降权，
-            # 避免把真实信号(如深度低估)直接抹平。
-            conflicted = {engine for conflict in conflicts for engine in (conflict["engine_a"], conflict["engine_b"])}
-            for engine in conflicted:
+        adjusted = dict(scores)
+        priority = self.PRIORITY_BY_REGIME.get(regime)
+        for conflict in conflicts:
+            engines = (conflict["engine_a"], conflict["engine_b"])
+            if priority in engines:
+                target_score = scores[priority].score
+                signal = self.PRIORITY_SIGNALS.get(regime, "冲突按市场状态优先引擎处理")
+            else:
+                target_score = min(scores[engine].score for engine in engines)
+                signal = "震荡市冲突取较低分" if regime == "shock" else "冲突未包含优先引擎，取较低分"
+
+            for engine in engines:
                 original = adjusted[engine]
                 adjusted[engine] = ScoreResult(
-                    original.score,
-                    round(original.confidence * self.CONFLICT_CONFIDENCE_PENALTY, 4),
+                    target_score,
+                    original.confidence,
                     original.details,
-                    [*original.signals, "与其他引擎分歧，置信度下调"],
+                    [*original.signals, signal],
                     original.available,
                 )
-        elif priority in adjusted:
-            for conflict in conflicts:
-                for engine in (conflict["engine_a"], conflict["engine_b"]):
-                    if engine != priority and engine in adjusted:
-                        original = adjusted[engine]
-                        priority_score = adjusted[priority].score
-                        adjusted[engine] = ScoreResult(
-                            round((original.score + priority_score) / 2, 2),
-                            original.confidence,
-                            original.details,
-                            original.signals,
-                            original.available,
-                        )
         return {"action": "adjusted", "adjusted_scores": adjusted, "reason": f"{regime} 状态下按规则调整冲突信号", "conflicts": conflicts}
-

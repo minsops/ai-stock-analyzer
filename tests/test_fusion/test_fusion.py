@@ -107,20 +107,50 @@ def test_conflict_resolver_quarantines_large_gap() -> None:
     assert result["action"] == "quarantine"
 
 
-def test_conflict_resolver_downweights_instead_of_min() -> None:
-    # 分歧但未到隔离阈值(gap 45)：保守状态应保留分数、下调置信度(降权)，而非取最小。
+def test_conflict_resolver_shock_uses_lower_score() -> None:
     scores = {"value": ScoreResult(80, 1.0), "trend": ScoreResult(35, 1.0)}
 
     result = ConflictResolver().resolve(scores, "shock")
 
     assert result["action"] == "adjusted"
     adjusted = result["adjusted_scores"]
-    # 分数保留(不被抹平到最小值)
-    assert adjusted["value"].score == 80
+    assert adjusted["value"].score == 35
     assert adjusted["trend"].score == 35
-    # 置信度被下调
-    assert adjusted["value"].confidence < 1.0
-    assert adjusted["trend"].confidence < 1.0
+    assert adjusted["value"].confidence == 1.0
+    assert adjusted["trend"].confidence == 1.0
+    assert "震荡市冲突取较低分" in adjusted["value"].signals
+
+
+def test_conflict_resolver_bull_prefers_trend_when_in_pair() -> None:
+    scores = {"value": ScoreResult(35, 1.0), "trend": ScoreResult(80, 1.0)}
+
+    result = ConflictResolver().resolve(scores, "bull")
+
+    adjusted = result["adjusted_scores"]
+    assert adjusted["value"].score == 80
+    assert adjusted["trend"].score == 80
+    assert "牛市冲突优先趋势分" in adjusted["value"].signals
+
+
+def test_conflict_resolver_bear_prefers_value_when_in_pair() -> None:
+    scores = {"value": ScoreResult(75, 1.0), "trend": ScoreResult(30, 1.0)}
+
+    result = ConflictResolver().resolve(scores, "bear")
+
+    adjusted = result["adjusted_scores"]
+    assert adjusted["value"].score == 75
+    assert adjusted["trend"].score == 75
+
+
+def test_conflict_resolver_uses_lower_score_without_priority_engine() -> None:
+    scores = {"industry": ScoreResult(75, 0.8), "event": ScoreResult(30, 0.9)}
+
+    result = ConflictResolver().resolve(scores, "bull")
+
+    adjusted = result["adjusted_scores"]
+    assert adjusted["industry"].score == 30
+    assert adjusted["event"].score == 30
+    assert adjusted["industry"].confidence == 0.8
 
 
 def test_stock_filter_rejects_low_liquidity() -> None:

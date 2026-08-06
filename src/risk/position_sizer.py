@@ -17,6 +17,7 @@ class PositionSizer:
         regime: str,
         total_capital: float,
         current_positions: dict[str, Any] | None = None,
+        industry: str | None = None,
     ) -> dict:
         current_positions = current_positions or {}
         regime_total_cap = settings.REGIME_TOTAL_POSITION.get(regime, settings.REGIME_TOTAL_POSITION["shock"])
@@ -30,6 +31,17 @@ class PositionSizer:
             suggested_pct = remaining_total_pct
             warnings.append("当前总仓位接近市场状态上限")
 
+        if industry:
+            current_industry_pct = sum(
+                float(item.get("pct", 0))
+                for item in current_positions.values()
+                if isinstance(item, dict) and item.get("industry") == industry
+            )
+            remaining_industry_pct = max(0.0, settings.MAX_INDUSTRY_POSITION - current_industry_pct)
+            if suggested_pct > remaining_industry_pct:
+                suggested_pct = remaining_industry_pct
+                warnings.append("同行业仓位接近上限")
+
         suggested_amount = round(total_capital * suggested_pct, 2)
         return {
             "code": code,
@@ -39,4 +51,3 @@ class PositionSizer:
             "regime_total_cap": regime_total_cap,
             "warnings": warnings,
         }
-

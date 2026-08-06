@@ -324,9 +324,10 @@ def valuation(stock_code: str) -> None:
 @click.option("--score", "composite_score", type=float, required=True, help="综合评分")
 @click.option("--regime", "regime_name", default="shock", help="市场状态")
 @click.option("--capital", type=float, required=True, help="总资金")
-def position(stock_code: str, composite_score: float, regime_name: str, capital: float) -> None:
+@click.option("--industry", default=None, help="股票所属行业，用于同行业仓位上限校验")
+def position(stock_code: str, composite_score: float, regime_name: str, capital: float, industry: str | None) -> None:
     """输出仓位建议。"""
-    suggestion = PositionSizer().suggest(stock_code, composite_score, regime_name, capital)
+    suggestion = PositionSizer().suggest(stock_code, composite_score, regime_name, capital, industry=industry)
     console.print(suggestion)
 
 

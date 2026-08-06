@@ -78,14 +78,13 @@ QUARANTINE_THRESHOLD = 60
 # 仓位管理
 MAX_SINGLE_POSITION = 0.20
 MAX_INDUSTRY_POSITION = 0.40
-# 各市场状态下的总仓位上限(自动按牛/震荡/熊/极恐切换，控制回撤而不过度牺牲牛市收益)。
-# "进取"档经回测在控回撤与保收益之间最平衡(3年回撤 -15% vs 满仓 -19%，收益 110% vs 121%)。
+# 各市场状态下的总仓位上限。
 REGIME_TOTAL_POSITION = {
-    "bull": 1.00,
-    "shock": 0.80,
+    "bull": 0.80,
+    "shock": 0.60,
     "bear": 0.40,
-    "extreme_fear": 0.10,   # 极度恐慌(近 3 日急跌)近乎清仓，最大化回撤保护
-    "extreme_greed": 0.60,
+    "extreme_fear": 0.20,
+    "extreme_greed": 0.50,
 }
 
 # 因子倾斜(路线B落地):扫描排序时把综合分向稳健因子集(低PE+ROE+净利同比+60日反转)

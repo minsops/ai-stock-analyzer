@@ -24,6 +24,11 @@ def run_backtest(request: BacktestRequest) -> dict:
 
 
 @router.get("/position/suggest")
-def suggest_position(code: str, capital: float, composite_score: float = 60, regime: str = "shock") -> dict:
-    return PositionSizer().suggest(code, composite_score, regime, capital)
-
+def suggest_position(
+    code: str,
+    capital: float,
+    composite_score: float = 60,
+    regime: str = "shock",
+    industry: str | None = None,
+) -> dict:
+    return PositionSizer().suggest(code, composite_score, regime, capital, industry=industry)
