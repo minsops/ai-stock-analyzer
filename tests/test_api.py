@@ -323,4 +323,4 @@ def test_watchlist_add_empty_code(monkeypatch) -> None:
 
     monkeypatch.setattr(watchlist, "get_storage", lambda: FakeWatchStorage())
     resp = client.post("/api/v1/watchlist", json={"code": "  "})
-    assert resp.json()["ok"] is False
+    assert resp.status_code == 422

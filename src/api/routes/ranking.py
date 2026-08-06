@@ -5,8 +5,9 @@ from __future__ import annotations
 import csv
 import io
 from datetime import date as date_type
+from typing import Annotated
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
 
 from src.api.dependencies import get_current_regime, get_storage
@@ -32,7 +33,11 @@ _CSV_COLUMNS = [
 
 
 @router.get("", response_model=RankingResponse)
-def get_ranking(date: str | None = None, top_n: int = 50, industry: str | None = None) -> dict:
+def get_ranking(
+    date: str | None = None,
+    top_n: Annotated[int, Query(ge=1)] = 50,
+    industry: str | None = None,
+) -> dict:
     score_date = date or date_type.today().isoformat()
     storage = get_storage()
     scores = storage.get_top_scores(score_date, top_n=top_n)
@@ -59,7 +64,11 @@ def get_ranking(date: str | None = None, top_n: int = 50, industry: str | None =
 
 
 @router.get("/export.csv")
-def export_ranking_csv(date: str | None = None, top_n: int = 100, industry: str | None = None) -> StreamingResponse:
+def export_ranking_csv(
+    date: str | None = None,
+    top_n: Annotated[int, Query(ge=1)] = 100,
+    industry: str | None = None,
+) -> StreamingResponse:
     """导出综合评分排行为 CSV(供筛选/二次分析)。"""
     score_date = date or date_type.today().isoformat()
     scores = get_storage().get_top_scores(score_date, top_n=top_n)

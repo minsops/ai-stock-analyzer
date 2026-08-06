@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from typing import Annotated
+
+from fastapi import APIRouter, Query
 
 from src.api.dependencies import get_analyst, get_storage
 from src.industry import IndustryRanker
@@ -11,7 +13,11 @@ router = APIRouter(prefix="/industry", tags=["industry"])
 
 
 @router.get("/hot")
-def hot_industries(top: int = 8, lookback_days: int = 250, min_stocks: int = 15) -> dict:
+def hot_industries(
+    top: Annotated[int, Query(ge=1)] = 8,
+    lookback_days: int = 250,
+    min_stocks: int = 15,
+) -> dict:
     """近一年热门行业(按成分股涨幅中位数排序，稳健)。"""
     strength = IndustryRanker(get_storage()).industry_strength(lookback_days=lookback_days, min_stocks=min_stocks)
     items = []
@@ -29,7 +35,11 @@ def hot_industries(top: int = 8, lookback_days: int = 250, min_stocks: int = 15)
 
 
 @router.get("/chain")
-def industry_chain(industry: str, top: int = 12, ai: bool = True) -> dict:
+def industry_chain(
+    industry: str,
+    top: Annotated[int, Query(ge=1)] = 12,
+    ai: bool = True,
+) -> dict:
     """某行业头部个股 + 产业链(上下游/合作/受益标的)AI 分析。"""
     ranker = IndustryRanker(get_storage())
     members = ranker.industry_members_ranked(industry, limit=top)

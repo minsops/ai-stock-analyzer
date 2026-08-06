@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import date
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 
@@ -87,7 +90,7 @@ class FilterOverrides(BaseModel):
 
 
 class ScanRequest(BaseModel):
-    top_n: int = 50
+    top_n: int = Field(default=50, ge=1)
     filters: FilterOverrides = Field(default_factory=FilterOverrides)
 
 
@@ -97,11 +100,17 @@ class ScanTaskResponse(BaseModel):
 
 
 class BacktestRequest(BaseModel):
-    start_date: str
-    end_date: str
-    initial_capital: float = 100_000
-    rebalance_freq: str = "monthly"
-    top_n: int = 10
+    start_date: date
+    end_date: date
+    initial_capital: float = Field(default=100_000, gt=0)
+    rebalance_freq: Literal["weekly", "monthly"] = "monthly"
+    top_n: int = Field(default=10, ge=1)
     position_rule: str = "equal"
     # selection: "score"（系统综合评分）或 "momentum"（动量基准）
-    selection: str = "score"
+    selection: Literal["score", "momentum"] = "score"
+
+    @model_validator(mode="after")
+    def validate_date_range(self) -> "BacktestRequest":
+        if self.start_date > self.end_date:
+            raise ValueError("start_date 不能晚于 end_date")
+        return self

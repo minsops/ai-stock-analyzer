@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from typing import Annotated
 
-from fastapi import APIRouter
-from pydantic import BaseModel
+from fastapi import APIRouter, Path
+from pydantic import BaseModel, Field
 
 from src.api.dependencies import get_storage
 
@@ -14,11 +15,11 @@ router = APIRouter(prefix="/watchlist", tags=["watchlist"])
 
 
 class WatchlistAddRequest(BaseModel):
-    code: str
+    code: Annotated[str, Field(pattern=r"^\d{6}$")]
     note: str | None = None
     group_name: str | None = None
-    alert_above: float | None = None
-    alert_below: float | None = None
+    alert_above: float | None = Field(default=None, ge=0, le=100)
+    alert_below: float | None = Field(default=None, ge=0, le=100)
 
 
 def _enrich(item: dict, storage) -> dict:
@@ -77,8 +78,6 @@ def list_alerts() -> dict:
 @router.post("")
 def add_watchlist(request: WatchlistAddRequest) -> dict:
     code = request.code.strip()
-    if not code:
-        return {"ok": False, "reason": "代码为空"}
     added = get_storage().add_to_watchlist(
         code,
         note=request.note,
@@ -90,6 +89,6 @@ def add_watchlist(request: WatchlistAddRequest) -> dict:
 
 
 @router.delete("/{code}")
-def delete_watchlist(code: str) -> dict:
+def delete_watchlist(code: Annotated[str, Path(pattern=r"^\d{6}$")]) -> dict:
     removed = get_storage().remove_from_watchlist(code.strip())
     return {"ok": True, "code": code, "removed": removed}
