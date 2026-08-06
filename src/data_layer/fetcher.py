@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
+import inspect
+import threading
 import time
 from typing import Any, Callable, TypeVar
 
@@ -16,10 +18,25 @@ from src.data_layer.cleaner import DataCleaner
 
 
 T = TypeVar("T")
+_rate_limit_lock = threading.Lock()
+_last_external_call_at: float | None = None
 
 
 def _empty_df() -> pd.DataFrame:
     return pd.DataFrame()
+
+
+def _wait_for_rate_limit() -> None:
+    """Ensure external calls start at a process-wide minimum interval."""
+    global _last_external_call_at
+
+    with _rate_limit_lock:
+        now = time.monotonic()
+        if _last_external_call_at is not None:
+            remaining = settings.FETCH_DELAY_SECONDS - (now - _last_external_call_at)
+            if remaining > 0:
+                time.sleep(remaining)
+        _last_external_call_at = time.monotonic()
 
 
 class StockDataFetcher:
@@ -92,7 +109,6 @@ class StockDataFetcher:
                 start_date=start_date,
                 end_date=end_date,
                 adjust="qfq",
-                timeout=settings.FETCH_TIMEOUT_SECONDS,
             )
             if not df.empty:
                 # 腾讯日线接口的 amount 列实际为成交量，不提供成交额。
@@ -106,6 +122,10 @@ class StockDataFetcher:
                         "amount": "成交量",
                     }
                 )
+                if "成交量" in df and "收盘" in df:
+                    volume = pd.to_numeric(df["成交量"], errors="coerce")
+                    close = pd.to_numeric(df["收盘"], errors="coerce")
+                    df["成交额"] = volume * close * 100
         cleaned = self.cleaner.clean_quotes(df)
         if not cleaned.empty:
             cleaned["code"] = normalized_code
@@ -234,10 +254,17 @@ class StockDataFetcher:
         if resolved is None:
             logger.warning(f"{description}: 当前 AKShare 版本缺少接口 {func}，已跳过")
             return _empty_df()
+        call_kwargs = dict(kwargs)
+        try:
+            timeout_parameter = inspect.signature(resolved).parameters.get("timeout")
+        except (TypeError, ValueError):
+            timeout_parameter = None
+        if timeout_parameter is not None and timeout_parameter.kind is not inspect.Parameter.POSITIONAL_ONLY:
+            call_kwargs.setdefault("timeout", settings.FETCH_TIMEOUT_SECONDS)
         for attempt in range(1, settings.FETCH_RETRY_TIMES + 1):
             try:
-                time.sleep(settings.FETCH_DELAY_SECONDS)
-                df = resolved(*args, **kwargs)
+                _wait_for_rate_limit()
+                df = resolved(*args, **call_kwargs)
                 if df is None or df.empty:
                     logger.warning(f"{description} 返回空数据")
                     return _empty_df()

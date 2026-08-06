@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from src.data_layer.cache import DataCache
 from src.data_layer.cleaner import DataCleaner
+from src.data_layer import fetcher as fetcher_module
 from src.data_layer.fetcher import StockDataFetcher
 
 
@@ -72,8 +74,21 @@ def test_fetcher_daily_quotes_falls_back_to_tencent_source(tmp_path, monkeypatch
         def stock_zh_a_hist(self, **kwargs) -> pd.DataFrame:
             raise ConnectionError("eastmoney disconnected")
 
-        def stock_zh_a_hist_tx(self, **kwargs) -> pd.DataFrame:
-            self.tx_kwargs = kwargs
+        def stock_zh_a_hist_tx(
+            self,
+            symbol: str,
+            start_date: str,
+            end_date: str,
+            adjust: str,
+            timeout: int | None = None,
+        ) -> pd.DataFrame:
+            self.tx_kwargs = {
+                "symbol": symbol,
+                "start_date": start_date,
+                "end_date": end_date,
+                "adjust": adjust,
+                "timeout": timeout,
+            }
             return pd.DataFrame(
                 {
                     "date": ["2026-01-02"],
@@ -97,7 +112,10 @@ def test_fetcher_daily_quotes_falls_back_to_tencent_source(tmp_path, monkeypatch
     assert result.iloc[0]["trade_date"].isoformat() == "2026-01-02"
     assert result.iloc[0]["close"] == 10.3
     assert result.iloc[0]["volume"] == 123_456
-    assert pd.isna(result.iloc[0]["amount"])
+    assert result["amount"].notna().all()
+    assert result.iloc[0]["amount"] == pytest.approx(
+        result.iloc[0]["volume"] * result.iloc[0]["close"] * 100
+    )
     assert fetcher._ak.tx_kwargs == {
         "symbol": "sz000001",
         "start_date": "20260101",
@@ -105,6 +123,64 @@ def test_fetcher_daily_quotes_falls_back_to_tencent_source(tmp_path, monkeypatch
         "adjust": "qfq",
         "timeout": settings.FETCH_TIMEOUT_SECONDS,
     }
+
+
+def test_fetcher_instances_share_process_wide_rate_limit(tmp_path, monkeypatch) -> None:
+    from config import settings
+
+    class FakeClock:
+        def __init__(self) -> None:
+            self.now = 0.0
+            self.sleeps: list[float] = []
+
+        def monotonic(self) -> float:
+            return self.now
+
+        def sleep(self, seconds: float) -> None:
+            self.sleeps.append(seconds)
+            self.now += seconds
+
+    clock = FakeClock()
+    monkeypatch.setattr(settings, "FETCH_DELAY_SECONDS", 0.5)
+    monkeypatch.setattr(settings, "FETCH_RETRY_TIMES", 1)
+    monkeypatch.setattr(fetcher_module.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(fetcher_module.time, "sleep", clock.sleep)
+    monkeypatch.setattr(fetcher_module, "_last_external_call_at", None, raising=False)
+
+    starts: list[float] = []
+
+    def external_call() -> pd.DataFrame:
+        starts.append(clock.monotonic())
+        return pd.DataFrame({"ok": [1]})
+
+    first = StockDataFetcher(cache=DataCache(tmp_path / "first"), cleaner=DataCleaner())
+    second = StockDataFetcher(cache=DataCache(tmp_path / "second"), cleaner=DataCleaner())
+
+    first._safe_call("第一个接口", external_call)
+    second._safe_call("第二个接口", external_call)
+
+    assert starts == [0.0, 0.5]
+    assert clock.sleeps == [0.5]
+
+
+def test_fetcher_injects_timeout_only_when_function_declares_it(tmp_path, monkeypatch) -> None:
+    from config import settings
+
+    _disable_fetch_waits(monkeypatch)
+    monkeypatch.setattr(settings, "FETCH_RETRY_TIMES", 1)
+    fetcher = StockDataFetcher(cache=DataCache(tmp_path), cleaner=DataCleaner())
+    received_timeouts: list[int] = []
+
+    def supports_timeout(*, timeout: int) -> pd.DataFrame:
+        received_timeouts.append(timeout)
+        return pd.DataFrame({"ok": [1]})
+
+    def has_no_timeout() -> pd.DataFrame:
+        return pd.DataFrame({"ok": [1]})
+
+    assert not fetcher._safe_call("支持超时", supports_timeout).empty
+    assert not fetcher._safe_call("不支持超时", has_no_timeout).empty
+    assert received_timeouts == [settings.FETCH_TIMEOUT_SECONDS]
 
 
 def test_fetcher_safe_call_retries_then_returns_data(tmp_path, monkeypatch) -> None:
