@@ -12,6 +12,7 @@ from loguru import logger
 from config import settings
 from src.data_layer.fetcher import StockDataFetcher
 from src.data_layer.storage import DataStorage
+from src.fusion.regime_detector import RegimeDetector
 
 
 @dataclass
@@ -42,6 +43,7 @@ class DataUpdater:
     def __init__(self, fetcher: StockDataFetcher, storage: DataStorage) -> None:
         self.fetcher = fetcher
         self.storage = storage
+        self.regime_detector = RegimeDetector()
 
     def update(
         self,
@@ -114,6 +116,14 @@ class DataUpdater:
             industry_index = self.fetcher.get_industry_index()
             if not industry_index.empty:
                 summary.industry_index = self.storage.upsert_industry_index(industry_index)
+
+        try:
+            market_data = self.fetcher.get_market_overview()
+        except Exception as exc:  # noqa: BLE001 - 市场状态失败不影响个股数据更新
+            logger.warning(f"市场状态数据获取失败，按震荡处理: {exc}")
+            market_data = {}
+        regime, confidence, details = self.regime_detector.detect(market_data)
+        self.storage.save_market_regime(date.today(), regime, confidence, details)
 
         return summary
 

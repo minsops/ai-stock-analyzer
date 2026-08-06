@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 
 class EngineScoreDetail(BaseModel):
@@ -68,9 +68,27 @@ class RegimeResponse(BaseModel):
     details: dict
 
 
+class FilterOverrides(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    exclude_st: StrictBool | None = None
+    exclude_new_stock_days: int | None = Field(default=None, ge=0, strict=True)
+    min_daily_amount: float | None = Field(default=None, ge=0, strict=True)
+    exclude_suspended: StrictBool | None = None
+    max_pe_ttm: float | None = Field(default=None, strict=True)
+    min_pe_ttm: float | None = Field(default=None, strict=True)
+    max_debt_ratio: float | None = Field(default=None, ge=0, le=100, strict=True)
+
+    @model_validator(mode="after")
+    def validate_pe_range(self) -> "FilterOverrides":
+        if self.min_pe_ttm is not None and self.max_pe_ttm is not None and self.min_pe_ttm > self.max_pe_ttm:
+            raise ValueError("min_pe_ttm 不能大于 max_pe_ttm")
+        return self
+
+
 class ScanRequest(BaseModel):
     top_n: int = 50
-    filters: dict = Field(default_factory=dict)
+    filters: FilterOverrides = Field(default_factory=FilterOverrides)
 
 
 class ScanTaskResponse(BaseModel):
@@ -87,4 +105,3 @@ class BacktestRequest(BaseModel):
     position_rule: str = "equal"
     # selection: "score"（系统综合评分）或 "momentum"（动量基准）
     selection: str = "score"
-

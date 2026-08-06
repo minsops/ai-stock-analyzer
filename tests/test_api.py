@@ -34,6 +34,9 @@ def test_openapi_available() -> None:
 
 
 class FakeRanker:
+    def __init__(self) -> None:
+        self.scan_calls: list[tuple[int, dict]] = []
+
     def score_single(self, code: str) -> dict:
         return {
             "code": code,
@@ -52,7 +55,8 @@ class FakeRanker:
             "scored_at": "2026-06-02T10:00:00",
         }
 
-    def scan_all(self, top_n: int = 50) -> pd.DataFrame:
+    def scan_all(self, top_n: int = 50, filters: dict | None = None) -> pd.DataFrame:
+        self.scan_calls.append((top_n, filters or {}))
         return pd.DataFrame(
             {
                 "code": ["000001"],
@@ -126,9 +130,10 @@ def test_stock_chart_data_endpoint(monkeypatch) -> None:
 
 def test_scan_endpoints(monkeypatch) -> None:
     scan.TASKS.clear()
-    monkeypatch.setattr(scan, "get_ranker", lambda: FakeRanker())
+    fake_ranker = FakeRanker()
+    monkeypatch.setattr(scan, "get_ranker", lambda: fake_ranker)
 
-    create_response = client.post("/api/v1/scan", json={"top_n": 1, "filters": {}})
+    create_response = client.post("/api/v1/scan", json={"top_n": 1, "filters": {"exclude_st": False}})
     task_id = create_response.json()["task_id"]
     status_response = client.get(f"/api/v1/scan/{task_id}")
 
@@ -136,6 +141,37 @@ def test_scan_endpoints(monkeypatch) -> None:
     assert status_response.status_code == 200
     assert status_response.json()["status"] == "completed"
     assert status_response.json()["result"][0]["code"] == "000001"
+    assert fake_ranker.scan_calls == [(1, {"exclude_st": False})]
+
+
+def test_scan_rejects_unknown_or_invalid_filter_overrides(monkeypatch) -> None:
+    monkeypatch.setattr(scan, "get_ranker", lambda: FakeRanker())
+
+    unknown = client.post("/api/v1/scan", json={"filters": {"unknown_rule": True}})
+    wrong_type = client.post("/api/v1/scan", json={"filters": {"exclude_st": "false"}})
+    negative = client.post("/api/v1/scan", json={"filters": {"min_daily_amount": -1}})
+    invalid_range = client.post(
+        "/api/v1/scan",
+        json={"filters": {"min_pe_ttm": 20, "max_pe_ttm": 10}},
+    )
+
+    assert unknown.status_code == 422
+    assert wrong_type.status_code == 422
+    assert negative.status_code == 422
+    assert invalid_range.status_code == 422
+
+
+def test_empty_regime_degrades_without_network(monkeypatch) -> None:
+    from src.api import dependencies
+
+    class EmptyRegimeStorage:
+        def get_latest_market_regime(self) -> dict:
+            return {}
+
+    monkeypatch.setattr(dependencies, "get_storage", lambda: EmptyRegimeStorage())
+    monkeypatch.setattr(dependencies, "get_fetcher", lambda: (_ for _ in ()).throw(AssertionError("network fallback called")))
+
+    assert dependencies.get_current_regime() == ("shock", 0.3, {"reason": "市场数据不足，默认震荡"})
 
 
 def test_ranking_endpoint(monkeypatch) -> None:

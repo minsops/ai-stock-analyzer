@@ -8,6 +8,13 @@ from src.data_layer import DataStorage, DataUpdater
 
 
 class FakeFetcher:
+    def get_market_overview(self) -> dict:
+        return {
+            "hs300": [{"close": value} for value in range(3000, 3080)],
+            "advancers": 3200,
+            "decliners": 1200,
+        }
+
     def get_stock_list(self, with_industry: bool = True) -> pd.DataFrame:
         return pd.DataFrame(
             {
@@ -89,6 +96,7 @@ def test_data_updater_full_update_writes_all_tables() -> None:
     assert summary.capital == 1
     assert summary.industry_index == 1
     assert storage.get_stock_info("000001")["name"] == "平安银行"
+    assert storage.get_latest_market_regime()["regime"] == "bull"
 
 
 def test_data_updater_sample_limits_universe() -> None:

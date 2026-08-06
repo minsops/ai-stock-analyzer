@@ -182,7 +182,8 @@ def test_historical_valuation_computes_percentile() -> None:
 
 
 class FakeFetcher:
-    calls = 0
+    def __init__(self) -> None:
+        self.calls = 0
 
     def get_market_overview(self) -> dict:
         self.calls += 1
@@ -232,8 +233,10 @@ def test_ranker_score_single_returns_report() -> None:
             }
         )
     )
+    storage.save_market_regime(date.today(), "bear", 0.8, {"source": "stored"})
+    fetcher = FakeFetcher()
     ranker = StockRanker(
-        fetcher=FakeFetcher(),  # type: ignore[arg-type]
+        fetcher=fetcher,  # type: ignore[arg-type]
         storage=storage,
         engines=[ValueEngine(), TrendEngine(), CapitalEngine(), IndustryEngine(), EventEngine()],
         regime_detector=RegimeDetector(),
@@ -246,10 +249,12 @@ def test_ranker_score_single_returns_report() -> None:
 
     assert report["code"] == "000001"
     assert report["filter_passed"]
+    assert report["regime"] == "bear"
+    assert fetcher.calls == 0
     assert "engine_scores" in report
 
 
-def test_scan_all_reuses_single_market_detection_and_saves_scores() -> None:
+def test_scan_all_uses_persisted_regime_without_network_and_saves_scores() -> None:
     storage = DataStorage("sqlite:///:memory:")
     storage.init_db()
     storage.upsert_stocks(
@@ -270,6 +275,7 @@ def test_scan_all_reuses_single_market_detection_and_saves_scores() -> None:
     q2 = make_quotes()
     q2["code"] = "000002"
     storage.upsert_daily_quotes(pd.concat([q1, q2], ignore_index=True))
+    storage.save_market_regime(date.today(), "bear", 0.8, {"source": "stored"})
     fetcher = FakeFetcher()
     ranker = StockRanker(
         fetcher=fetcher,  # type: ignore[arg-type]
@@ -284,10 +290,44 @@ def test_scan_all_reuses_single_market_detection_and_saves_scores() -> None:
     result = ranker.scan_all(top_n=2)
     top_scores = storage.get_top_scores(date.today().isoformat(), top_n=2)
 
-    assert fetcher.calls == 1
+    assert fetcher.calls == 0
     assert len(result) == 2
     assert set(top_scores["name"]) == {"平安银行", "万科A"}
-    assert storage.get_latest_market_regime()["regime"] == "bull"
+    assert storage.get_latest_market_regime()["regime"] == "bear"
+
+
+def test_scan_all_applies_filter_overrides_for_only_that_run() -> None:
+    storage = DataStorage("sqlite:///:memory:")
+    storage.init_db()
+    storage.upsert_stocks(
+        pd.DataFrame(
+            {
+                "code": ["000001"],
+                "name": ["*ST测试"],
+                "market": ["SZ"],
+                "industry_l1": ["工业"],
+                "industry_l2": [None],
+                "list_date": [date(1991, 4, 3)],
+                "is_st": [True],
+                "is_active": [True],
+            }
+        )
+    )
+    storage.upsert_daily_quotes(make_quotes())
+    storage.save_market_regime(date.today(), "shock", 0.8, {"source": "stored"})
+    ranker = StockRanker(
+        fetcher=FakeFetcher(),  # type: ignore[arg-type]
+        storage=storage,
+        engines=[],
+        regime_detector=RegimeDetector(),
+        weight_manager=WeightManager(),
+        conflict_resolver=ConflictResolver(),
+        stock_filter=StockFilter(),
+    )
+
+    assert ranker.scan_all(top_n=1).empty
+    assert len(ranker.scan_all(top_n=1, filters={"exclude_st": False})) == 1
+    assert ranker.scan_all(top_n=1).empty
 
 
 def test_ranker_builds_industry_context_with_return_and_volume_ranks() -> None:

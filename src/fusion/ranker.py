@@ -21,6 +21,28 @@ from src.risk.trade_plan import TradePlan
 from src.valuation.historical import HistoricalValuation
 
 
+def resolve_local_regime(
+    storage: DataStorage,
+    detector: RegimeDetector,
+) -> tuple[str, float, dict[str, Any]]:
+    """从本地持久化记录解析市场状态，空库时保守降级。"""
+    persisted = storage.get_latest_market_regime()
+    if not persisted or not persisted.get("regime"):
+        return detector.detect({})
+
+    details = persisted.get("details_json")
+    if isinstance(details, str):
+        try:
+            details = json.loads(details)
+        except (TypeError, ValueError):
+            details = {}
+    return (
+        str(persisted["regime"]),
+        float(persisted.get("confidence") or 0.0),
+        details if isinstance(details, dict) else {},
+    )
+
+
 class StockRanker:
     """整合所有模块，输出最终评分报告和排行榜。"""
 
@@ -48,6 +70,7 @@ class StockRanker:
         code: str,
         market_data: dict[str, Any] | None = None,
         detected_regime: tuple[str, float, dict[str, Any]] | None = None,
+        stock_filter: StockFilter | None = None,
     ) -> dict[str, Any]:
         stock_info = self.storage.get_stock_info(code) or {"code": code, "name": code, "industry_l1": None, "is_st": False}
         quotes = self.storage.get_quotes(code)
@@ -55,12 +78,11 @@ class StockRanker:
         financial_history = self.storage.get_financial_history(code)
         capital = self.storage.get_capital_flow(code)
         if detected_regime is None:
-            market_data = market_data or self.fetcher.get_market_overview()
-            regime, regime_confidence, regime_details = self.regime_detector.detect(market_data)
+            regime, regime_confidence, regime_details = self._get_local_regime()
         else:
             regime, regime_confidence, regime_details = detected_regime
 
-        filter_passed, filter_reason = self.stock_filter.apply(code, stock_info, quotes, financial)
+        filter_passed, filter_reason = (stock_filter or self.stock_filter).apply(code, stock_info, quotes, financial)
         context = {
             "stock_info": stock_info,
             "quotes": quotes,
@@ -111,16 +133,15 @@ class StockRanker:
             "scored_at": pd.Timestamp.now().isoformat(),
         }
 
-    def scan_all(self, top_n: int = 50) -> pd.DataFrame:
+    def scan_all(self, top_n: int = 50, filters: dict[str, Any] | None = None) -> pd.DataFrame:
         codes = self.storage.get_all_active_codes()
         rows: list[dict[str, Any]] = []
+        scan_filter = StockFilter(filters)
         logger.info(f"开始全市场评分，股票数: {len(codes)}")
-        market_data = self.fetcher.get_market_overview()
-        detected_regime = self.regime_detector.detect(market_data)
-        self.storage.save_market_regime(date.today(), detected_regime[0], detected_regime[1], detected_regime[2])
+        detected_regime = self._get_local_regime()
         for code in codes:
             try:
-                report = self.score_single(code, market_data=market_data, detected_regime=detected_regime)
+                report = self.score_single(code, detected_regime=detected_regime, stock_filter=scan_filter)
                 if report["filter_passed"] and not report["quarantined"]:
                     rows.append(
                         {
@@ -146,6 +167,9 @@ class StockRanker:
         if not result.empty:
             self.storage.save_scores(result)
         return result
+
+    def _get_local_regime(self) -> tuple[str, float, dict[str, Any]]:
+        return resolve_local_regime(self.storage, self.regime_detector)
 
     def _apply_factor_tilt(self, frame: pd.DataFrame) -> pd.DataFrame:
         """把综合分向稳健因子集(低PE+ROE+净利同比+60日反转)轻度倾斜。

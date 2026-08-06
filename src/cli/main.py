@@ -16,6 +16,7 @@ from src.backtest import BacktestSimulator
 from src.data_layer import DataStorage, DataUpdater, StockDataFetcher
 from src.engines import CapitalEngine, EventEngine, IndustryEngine, NewsEngine, TrendEngine, ValueEngine
 from src.fusion import ConflictResolver, RegimeDetector, StockFilter, StockRanker, WeightManager
+from src.fusion.ranker import resolve_local_regime
 from src.industry import IndustryRanker
 from src.llm import LLMAnalyst
 from src.risk import PositionSizer
@@ -57,7 +58,7 @@ def _refresh_news(days: int = 30, limit: int = 30, workers: int = 10, codes: lis
     storage = DataStorage()
     storage.init_db()
     fetcher = NewsFetcher()
-    code_list = codes or pd.read_sql("SELECT DISTINCT code FROM daily_quotes", storage.engine)["code"].tolist()
+    code_list = codes or storage.get_codes_with_quotes()
     if not code_list:
         return {"written": 0, "covered": 0}
     total = 0
@@ -77,7 +78,7 @@ def _refresh_capital(workers: int = 4, codes: list[str] | None = None) -> dict:
     storage = DataStorage()
     storage.init_db()
     fetcher = StockDataFetcher()  # akshare 源，需能连东财
-    code_list = codes or pd.read_sql("SELECT DISTINCT code FROM daily_quotes", storage.engine)["code"].tolist()
+    code_list = codes or storage.get_codes_with_quotes()
     if not code_list:
         return {"written": 0, "covered": 0, "failed": 0}
     total, failed = 0, 0
@@ -237,17 +238,11 @@ def scan(top_n: int) -> None:
 def industry_scan(top_industries: int, lookback_days: int, min_industry_stocks: int, min_pick: int, max_pick: int, top_show: int, with_ai: bool) -> None:
     """近一年热门行业 + 行业内分类选股 + 产业链分析。"""
     ranker = make_ranker()
-    # 用 baostock 取大盘状态(akshare 行情域名在部分网络不可达)，失败则默认震荡。
-    try:
-        market_data = make_fetcher("baostock").get_market_overview()
-    except Exception as exc:  # noqa: BLE001
-        console.print(f"[yellow]大盘状态获取失败，按震荡处理: {exc}[/yellow]")
-        market_data = {}
-    detected = ranker.regime_detector.detect(market_data)
+    detected = resolve_local_regime(ranker.storage, ranker.regime_detector)
     console.print(f"市场状态: [bold]{detected[0]}[/bold] (置信度 {detected[1]:.0%})")
 
     def scorer(code: str) -> dict:
-        return ranker.score_single(code, market_data=market_data, detected_regime=detected)
+        return ranker.score_single(code, detected_regime=detected)
 
     selections = IndustryRanker(ranker.storage).select(
         top_industries=top_industries,
@@ -289,9 +284,7 @@ def industry_scan(top_industries: int, lookback_days: int, min_industry_stocks: 
 @cli.command("regime")
 def regime() -> None:
     """输出当前市场状态。"""
-    fetcher = StockDataFetcher()
-    detector = RegimeDetector()
-    regime_name, confidence, details = detector.detect(fetcher.get_market_overview())
+    regime_name, confidence, details = resolve_local_regime(DataStorage(), RegimeDetector())
     console.print(f"市场状态: [bold]{regime_name}[/bold]，置信度: {confidence:.2f}")
     console.print(details)
 
