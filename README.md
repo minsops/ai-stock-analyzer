@@ -2,8 +2,6 @@
 
 实现本地可运行的后端、CLI 和 API：AKShare 数据拉取、清洗、SQLite 存储、磁盘缓存、规则评分、融合排序、仓位建议、回测和 FastAPI。在规则引擎可解释打分之上，接入 **DeepSeek 大模型**生成自然语言投资研判（评级 / 多空逻辑 / 风险）。阶段二、三的调度、通知、模拟券商、执行引擎和模拟盘也已提供本地安全实现。
 
-> 风险提示：所有评分与 AI 分析仅供研究参考，不构成投资建议。
-
 ## 安装
 
 ```bash
@@ -13,6 +11,8 @@ pip install -r requirements.txt
 pip install .          # 安装 ai-stock 命令（改动源码后需重装；开发时也可用 python -m）
 cp .env.example .env   # 按需填入 DEEPSEEK_API_KEY
 python scripts/init_db.py
+# 后续版本升级数据库结构
+alembic upgrade head
 pytest
 ```
 
@@ -55,6 +55,7 @@ ai-stock scan --top-n 20
 ai-stock industry-scan --top-industries 8 --ai          # 热门行业 + 行业内选股 + 产业链分析
 ai-stock regime
 ai-stock valuation 000001
+ai-stock position 000001 --score 75 --regime shock --capital 500000 --industry 银行
 ai-stock backtest --start 2025-01-01 --end 2025-12-31 --top-n 10 --freq monthly --method score
 ai-stock serve --port 8000
 ```
@@ -72,7 +73,7 @@ ai-stock update-data --source baostock --index hs300,zz500 --years 1 --include-s
 ai-stock industry-scan --top-industries 8 --min-pick 20 --max-pick 50 --ai
 ```
 
-产业链关系无免费结构化数据源，由 DeepSeek 生成，仅供研究参考。
+产业链关系无免费结构化数据源，由 DeepSeek 生成，结果会保留模型不可用和数据不足等事实性状态。
 
 ## AI 分析（DeepSeek）
 
@@ -98,7 +99,9 @@ Swagger UI: `http://127.0.0.1:8000/docs`
 ```bash
 # 1) 构建并起 API + 调度器(compose 含两个服务:api 提供仪表盘，scheduler 常驻定时跑数据/扫描)
 docker compose up -d --build
-# 2) 初始化数据(容器内执行一次；国内服务器可直接用 akshare 全量)
+# 2) 初始化/升级数据库结构
+docker compose exec api python scripts/init_db.py
+# 3) 初始化数据(容器内执行一次；国内服务器可直接用 akshare 全量)
 docker compose exec api ai-stock update-data --full --workers 8        # 行情+财务+资金+行业(东财)
 #   或网络受限时用 baostock 主源 + 单独补真实资金:
 docker compose exec api ai-stock update-data --source baostock --index hs300,zz500 --years 1 --include-slow-data --workers 1
@@ -118,7 +121,7 @@ docker compose exec api ai-stock schedule --run-once --top-n 30
 # 调度时间默认 17:30 更新 / 18:00 扫描，按容器内 TZ=Asia/Shanghai;改 --update-time/--scan-time
 ```
 
-- 仓位随市场状态自动升降(`REGIME_TOTAL_POSITION`，牛满仓/震荡0.8/熊0.4/极恐0.1);回测加 `--timing` 复现。
+- 仓位随市场状态自动升降(`REGIME_TOTAL_POSITION`，牛0.8/震荡0.6/熊0.4/极恐0.2/极贪0.5)，单股上限0.2、同行业上限0.4；回测加 `--timing` 复现。
 - 真实主力资金拉到后，资金引擎自动用真实数据替代量价代理。
 - 关键配置走环境变量(`.env`):`DATABASE_URL`(可换 Postgres)、`DEEPSEEK_API_KEY`、`UPDATE_MAX_WORKERS`、`AKSHARE_BYPASS_PROXY` 等。
 
@@ -135,6 +138,7 @@ docker compose exec api ai-stock schedule --run-once --top-n 30
 - 全量更新会拉取更长行情，并补充财务、资金和行业指数数据。
 - `--include-slow-data` 可在增量更新时同步补财务、资金和行业数据。
 - 单只股票拉取失败会记录日志并跳过，不中断整体更新。
+- 数据更新结束时会获取一次市场概览并持久化市场状态；评分、排行、CLI `regime` 和仪表盘只读本地状态，空库时按震荡降级，不在评分热路径访问外部行情。
 
 ## 阶段二/三本地模块
 

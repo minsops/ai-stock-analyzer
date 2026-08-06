@@ -12,3 +12,4 @@ data/factor_ic_report.csv
 .env
 *.egg-info/
 build/
+.DS_Store
